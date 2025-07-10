@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/your-project"
+Homepage = "https://github.com/dtlfwolf/dwlab-cmkapi"
 
 [tool.setuptools.packages.find]
 where = ["src"]
