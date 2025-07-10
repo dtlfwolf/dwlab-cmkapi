@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
-Name: dwlab-cmkapi
-Version: 0.6.40
+Name: dwlab_cmkapi
+Version: 0.6.42
 Summary: DW-Lab CMK API
 Author-email: Detlef Wolf <detlef.wolf@dw-lab.de>
 License: Copyright (c) 2025 DW-Lab GmbH

@@ -1,6 +1,9 @@
 LICENSE
 README.md
 pyproject.toml
+src/dwlab_cmkapi/__init__.py
+src/dwlab_cmkapi/cmkSite.py
+src/dwlab_cmkapi/cmk_RESTAPI.py
 src/dwlab_cmkapi.egg-info/PKG-INFO
 src/dwlab_cmkapi.egg-info/SOURCES.txt
 src/dwlab_cmkapi.egg-info/dependency_links.txt
