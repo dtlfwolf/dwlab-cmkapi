@@ -2,8 +2,8 @@ import requests
 import pprint
 import inspect
 import json
-from dwlabSettingsFile import dwlabSettings
-import dwlabRuntimeEnvironment as dwlab
+from dwlab_basicpy import dwlabSettings
+from dwlab_basicpy import dwlabRuntimeEnvironment as dwlab
 from pathlib import Path
 
 import logging
@@ -35,11 +35,18 @@ class Version:
         requestUrl="/version"
         session = requests.session()
         session.headers['Authorization'] = cmkAccess.credentials
-        resp = session.get(f"{apiUrl}{requestUrl}")
-        if resp.status_code == 200:
-            json_data = resp.json()
-        else:
-            raise RuntimeError(f"Failed to retrieve version information. Status code: {resp.status_code}")
+        try:
+            resp = session.get(f"{apiUrl}{requestUrl}")
+            if resp.status_code == 200:
+                json_data = resp.json()
+            else:
+                raise RuntimeError(f"Failed to retrieve version information. Status code: {resp.status_code}")
+        except requests.RequestException as e:
+            raise RuntimeError(f"Error while accessing the API: {str(e)}")
+        finally:
+            session.close()
+
+
         return cls(
             site=json_data.get("site", ""),
             group=json_data.get("group", ""),

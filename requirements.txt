@@ -1,5 +1,8 @@
-certifi==2025.7.9
-charset-normalizer==3.4.2
-idna==3.10
-requests==2.32.4
-urllib3==2.5.0
+certifi
+charset-normalizer
+idna
+requests
+urllib3
+pip-system-certs
+-e ../dwlab-basicpy/
+-r ./../dwlab-basicpy/requirements.txt 

@@ -1,2 +1,2 @@
-import cmk_RESTAPI
-import cmkSite
+from .cmk_RESTAPI import *
+from .cmkSite import *

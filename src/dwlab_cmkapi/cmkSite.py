@@ -1,12 +1,12 @@
 from pathlib import Path
 import sys
-import cmk_RESTAPI
-import dwlabRuntimeEnvironment as dwlab
-from dwlabSettingsFile import dwlabSettings
+from dwlab_cmkapi import cmk_RESTAPI
+from dwlab_basicpy import dwlabRuntimeEnvironment as dwlab
+from dwlab_basicpy import dwlabSettings
 
 import logging
-from dwlabLoggerSetup import setup_logging
-setup_logging()
+from dwlab_basicpy import dwlabLogger
+dwlabLogger.setup_logging()
 logger=logging.getLogger(__name__)
 
 class cmkCentralSite:
