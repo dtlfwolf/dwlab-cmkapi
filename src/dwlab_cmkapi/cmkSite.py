@@ -1,8 +1,6 @@
 from pathlib import Path
 import sys
 from dwlab_cmkapi import cmk_RESTAPI
-from dwlab_basicpy import dwlabRuntimeEnvironment as dwlab
-from dwlab_basicpy import dwlabSettings
 
 import logging
 from dwlab_basicpy import dwlabLogger

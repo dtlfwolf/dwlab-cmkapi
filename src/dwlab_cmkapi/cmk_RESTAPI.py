@@ -3,7 +3,7 @@ import pprint
 import inspect
 import json
 from dwlab_basicpy import dwlabSettings
-from dwlab_basicpy import dwlabRuntimeEnvironment as dwlab
+from dwlab_basicpy import dwlabRuntimeEnvironment
 from pathlib import Path
 
 import logging
@@ -169,7 +169,7 @@ class RestAPIcredentials:
         if configFile==None:
             ##
             ## Read the installation settings
-            env=dwlab.dwlabRuntimeEnvironment()
+            env=dwlabRuntimeEnvironment()
             configFile=Path.joinpath(env.dwlab_package_home,
                                         "etc",
                                         "dw-lab_InstallationSettings.yaml"
@@ -191,8 +191,6 @@ class RestAPIcredentials:
     
         cmkHostname=dwlab_IS.get_variable("centralHostname")
         cmkDomain=dwlab_IS.get_variable("centralDomain")
-        
-        #cls._version=Version.getVersion(cls)
         
         return cls (
             cmkHostname=cmkHostname, 
