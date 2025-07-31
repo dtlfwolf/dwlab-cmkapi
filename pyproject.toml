@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dwlab_cmkapi"
-version = "0.6.43"
+version = "0.6.44"
 description = "DW-Lab CMK API"
 readme = "README.md"
 license = { file = "LICENSE" }
