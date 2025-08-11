@@ -1,5 +1,5 @@
 .venv/
 venv/
 dist/
+src/dwlab_cmkapi.egg-info/
 src/*/__pycache__/
-src/*.egg-info/
