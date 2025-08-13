@@ -1,3 +1,4 @@
+setuptools
 certifi
 charset-normalizer
 idna
