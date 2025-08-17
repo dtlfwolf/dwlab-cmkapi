@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dwlab_cmkapi"
+name = "dwlab-cmkapi"
 version = "0.6.50"
 description = "DW-Lab CMK API"
 readme = "README.md"

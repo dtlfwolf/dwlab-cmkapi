@@ -1,9 +1,9 @@
 from pathlib import Path
 import sys
-from dwlab_cmkapi import cmk_RESTAPI
+from dwlab-cmkapi import cmk_RESTAPI
 
 import logging
-from dwlab_basicpy import dwlabLogger
+from dwlab-basicpy import dwlabLogger
 dwlabLogger.setup_logging()
 logger=logging.getLogger(__name__)
 

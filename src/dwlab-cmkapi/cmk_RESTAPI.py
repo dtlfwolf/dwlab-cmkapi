@@ -2,8 +2,8 @@ import requests
 import pprint
 import inspect
 import json
-from dwlab_basicpy import dwlabSettings
-from dwlab_basicpy import dwlabRuntimeEnvironment
+from dwlab-basicpy import dwlabSettings
+from dwlab-basicpy import dwlabRuntimeEnvironment
 from pathlib import Path
 
 import logging
