@@ -5,5 +5,5 @@ idna
 requests
 urllib3
 pip-system-certs
--e ../dwlab_basicpy/
--r ./../dwlab_basicpy/requirements.txt
+-e ../dwlabbasicpy/
+-r ./../dwlabbasicpy/requirements.txt

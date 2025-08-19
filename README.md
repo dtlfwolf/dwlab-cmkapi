@@ -1,8 +1,8 @@
-# dwlab-cmkapi
+# dwlabcmkapi
 
 > 🛠️ A Python library by DW-Lab GmbH to manage and automate Checkmk environments.
 
-`dwlab-cmkapi` provides a simple and extensible Python interface to interact with Checkmk servers, manage monitoring configurations, schedule backups, and integrate Checkmk operations into your custom workflows.
+`dwlabcmkapi` provides a simple and extensible Python interface to interact with Checkmk servers, manage monitoring configurations, schedule backups, and integrate Checkmk operations into your custom workflows.
 
 ---
 
@@ -21,4 +21,4 @@
 Install via pip (once published):
 
 ```bash
-pip install dwlab-cmkapi
+pip install dwlabcmkapi

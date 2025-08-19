@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: dwlabcmkapi
+Version: 0.6.1
+License-File: LICENSE
+Requires-Dist: dwlabbasicpy>=0.6.1
+Requires-Dist: requests>=2.22.0
+Requires-Dist: urllib3>=1.25.10
+Dynamic: license-file
+Dynamic: requires-dist
