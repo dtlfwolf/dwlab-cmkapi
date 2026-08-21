@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dwlabcmkapi"
+version = "0.20.1"
+description = "DW-Lab CMK API"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Detlef Wolf", email = "detlef.wolf@dw-lab.de" }
+]
+requires-python = ">=3.8"
+dependencies = [
+  "dwlabbasicpy>=0.20.0",
+  "dwlabbackup>=0.20.0",
+  "requests>=2.22.0",
+  "urllib3>=1.25.10"
+]
+
+[project.urls]
+Homepage = "https://github.com/dtlfwolf/dwlab-cmkapi"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["dwlabcmkapi*"]
+exclude = ["*.egg-info", "debian*", "etc*"]
+
+[tool.setuptools.package-data]
+dwlabcmkapi = ["etc/*.yaml"]
