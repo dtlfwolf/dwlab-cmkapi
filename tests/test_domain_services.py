@@ -76,6 +76,19 @@ def test_central_server_builds_managed_host_information():
     central = _central_server()
 
     assert central.managed_host_name("client01") == "client01.vpn.dwlab"
+    assert central.remote_instance_port == 5000
+    assert central.remote_status_url_prefix("client01") == "http://client01.vpn.dwlab:5000/client01/"
+    assert central.remote_site_url("client01") == "http://client01.vpn.dwlab:5000/client01/check_mk/"
+
+
+def test_central_server_preserves_explicit_remote_web_port():
+    central = CentralServer(
+        identity=CmkSiteIdentity(site_name="central", hostname="cmk", domain="example.org"),
+        ovpn_network="vpn",
+        ovpn_network_domain="dwlab",
+        remote_instance_port=8080,
+    )
+
     assert central.remote_status_url_prefix("client01") == "http://client01.vpn.dwlab:8080/client01/"
     assert central.remote_site_url("client01") == "http://client01.vpn.dwlab:8080/client01/check_mk/"
 
@@ -95,8 +108,8 @@ def test_catalog_service_creates_missing_host_and_site_connection():
         "create_site_connection",
         "client01",
         "client01.vpn.dwlab",
-        "http://client01.vpn.dwlab:8080/client01/",
-        "http://client01.vpn.dwlab:8080/client01/check_mk/",
+        "http://client01.vpn.dwlab:5000/client01/",
+        "http://client01.vpn.dwlab:5000/client01/check_mk/",
     ) in gateway.calls
     assert ("enable_status_host", "client01", "client01.vpn.dwlab", "central") in gateway.calls
 

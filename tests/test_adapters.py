@@ -63,3 +63,5 @@ def test_gateway_derives_ovpn_naming_for_site_connection(monkeypatch):
     assert captured["cmkAccess"] is gateway.cmk_access
     assert captured["path"] == "/domain-types/site_connection/collections/all"
     assert captured["site_connection"].extensions.status_connection.connection.host == "client01.vpn.dwlab.example"
+    assert captured["site_connection"].extensions.status_connection.url_prefix == "http://client01.vpn.dwlab.example:8080/client01/"
+    assert captured["site_connection"].extensions.configuration_connection.url_of_remote_site == "http://client01.vpn.dwlab.example:8080/client01/check_mk/"

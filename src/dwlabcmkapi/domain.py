@@ -53,7 +53,7 @@ class CmkServer:
 class CentralServer(CmkServer):
     ovpn_network: str
     ovpn_network_domain: str
-    remote_instance_port: int = 8080
+    remote_instance_port: int = 5000
 
     def __post_init__(self):
         for field_name in ("ovpn_network", "ovpn_network_domain"):
