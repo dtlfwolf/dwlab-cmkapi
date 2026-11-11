@@ -26,12 +26,15 @@ class FakeGateway:
         self.host_exists = True
         return {"host_name": host_name}
 
-    def run_discovery(self, host_config) -> None:
+    def run_discovery(self, host_config, mode: str = "fix_all") -> None:
         self.calls.append(("run_discovery", host_config["host_name"]))
 
     def activate_changes(self) -> str:
         self.calls.append(("activate_changes",))
         return "Done"
+
+    def activate_and_wait(self, site: str) -> None:
+        self.calls.append(("activate_and_wait", site))
 
     def list_site_ids(self):
         self.calls.append(("list_site_ids",))

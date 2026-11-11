@@ -1,5 +1,7 @@
 import json
 import logging
+import time
+from uuid import UUID
 
 from .api_client import CheckmkRestClient
 from .api_credentials import RestAPIcredentials
@@ -47,8 +49,9 @@ class HostManagementGateway:
         if response.status_code == 200:
             return ServiceDiscovery.map_dataDict_to_serviceDiscovery(response.json())
         if response.status_code in {400, 403, 406, 409, 415}:
-            logger.warning("run_discovery returned status %s: %s", response.status_code, response.json())
-            return None
+            raise RuntimeError(
+                f"Service discovery failed for {host_name}: "
+                f"HTTP {response.status_code}: {response.json()}")
         if response.status_code == 204:
             raise RuntimeWarning(response.status_code)
         raise RuntimeError(str(response.json()))
@@ -68,6 +71,40 @@ class ActivationGateway:
         if response.status_code in {403, 406}:
             raise RuntimeWarning(response.status_code)
         raise RuntimeError(str(response.json()))
+
+    def activate_and_wait(self, site: str, timeout: float = 120,
+                          monotonic=time.monotonic, sleep=time.sleep) -> None:
+        """Activate pending changes on one site and require successful completion.
+
+        Foreign changes are never forced. The polling endpoint is constructed
+        locally from the UUID, rather than following an arbitrary response URL.
+        """
+        etag, pending = self.load_pending_changes()
+        if not pending.get("value"):
+            return
+        response = self._client.post(
+            "/domain-types/activation_run/actions/activate-changes/invoke",
+            headers={"If-Match": etag},
+            json_body={"redirect": False, "sites": [site], "force_foreign_changes": False})
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Activation rejected: HTTP {response.status_code}: {response.json()}")
+        activation_id = str(UUID(response.json()["id"]))
+        deadline = monotonic() + timeout
+        while True:
+            status = self._client.get(f"/objects/activation_run/{activation_id}")
+            if status.status_code != 200:
+                raise RuntimeError(f"Cannot read activation {activation_id}: HTTP {status.status_code}")
+            extension = status.json()["extensions"]
+            if extension.get("is_running") is False:
+                sites = extension.get("status_per_site", [])
+                target = [item for item in sites if item.get("site") == site]
+                if len(target) != 1 or target[0].get("state") != "success":
+                    raise RuntimeError(f"Activation {activation_id} failed or unverified: {sites}")
+                return
+            if monotonic() >= deadline:
+                raise RuntimeError(f"Activation {activation_id} timed out")
+            sleep(1)
 
     def activate_pending_changes(
         self,

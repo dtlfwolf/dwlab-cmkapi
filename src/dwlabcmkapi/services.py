@@ -13,6 +13,9 @@ class SiteConnectionState:
     connection_host: str = ""
     status_host_host: str = ""
     status_host_site: str = ""
+    connection_port: int = 6557
+    connection_encrypted: bool = True
+    connection_verify: bool = False
 
 
 class CheckmkCatalogGateway(Protocol):
@@ -22,10 +25,13 @@ class CheckmkCatalogGateway(Protocol):
     def create_host(self, host_name: str, folder: str = "/", ip_address: str = ""):
         ...
 
-    def run_discovery(self, host_config) -> None:
+    def run_discovery(self, host_config, mode: str = "fix_all") -> None:
         ...
 
     def activate_changes(self) -> str:
+        ...
+
+    def activate_and_wait(self, site: str) -> None:
         ...
 
     def list_site_ids(self):
@@ -71,6 +77,7 @@ class ClientCatalogService:
         self,
         central_server: CentralServer,
         client_instance: ClientInstance,
+        defer_activation: bool = False,
     ) -> ClientCatalogResult:
         host_name = central_server.managed_host_name(client_instance.instance_name)
         host_config = self._gateway.get_host(host_name)
@@ -78,9 +85,10 @@ class ClientCatalogService:
 
         if host_config is None:
             host_config = self._gateway.create_host(host_name=host_name, folder="/")
-            self._gateway.activate_changes()
-            self._gateway.run_discovery(host_config)
-            self._gateway.activate_changes()
+            if not defer_activation:
+                self._gateway.activate_changes()
+                self._gateway.run_discovery(host_config)
+                self._gateway.activate_changes()
             host_created = True
 
         site_ids = set(self._gateway.list_site_ids())
@@ -113,6 +121,24 @@ class ClientCatalogService:
             site_connection_created=site_connection_created,
             status_host_updated=status_host_updated,
         )
+
+    def get_connection(self, site_id: str) -> SiteConnectionState:
+        """Read current connection details for runtime verification."""
+        connection = self._gateway.get_site_connection(site_id)
+        if connection is None:
+            raise RuntimeError(f"Site connection {site_id} could not be loaded")
+        return connection
+
+    def discover(self, host_name: str) -> None:
+        """Add missing services, including recovery from interrupted registration."""
+        host = self._gateway.get_host(host_name)
+        if host is None:
+            raise RuntimeError(f"Host {host_name} disappeared before discovery")
+        self._gateway.run_discovery(host, mode="new")
+
+    def activate(self, site: str) -> None:
+        """Activate pending configuration without forcing foreign-user changes."""
+        self._gateway.activate_and_wait(site)
 
 
 class SiteInventoryService:

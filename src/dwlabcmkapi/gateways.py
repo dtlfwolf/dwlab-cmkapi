@@ -37,6 +37,10 @@ class CheckmkGateway:
         etag, _ = self._activations.load_pending_changes()
         return self._activations.activate_pending_changes(etag)
 
+    def activate_and_wait(self, site: str) -> None:
+        """Require completion instead of treating an activation start as success."""
+        self._activations.activate_and_wait(site)
+
     def list_site_ids(self) -> list[str]:
         return self._site_connections.list_site_ids()
 
@@ -75,6 +79,7 @@ class CheckmkGateway:
             return None
 
         status_host = connection.extensions.status_connection.status_host
+        transport = connection.extensions.status_connection.connection.to_dict()
         return SiteConnectionState(
             site_id=site_id,
             title=connection.title,
@@ -83,6 +88,9 @@ class CheckmkGateway:
             status_host_enabled=(status_host.status_host_set == "enabled"),
             status_host_host=status_host.host,
             status_host_site=status_host.site,
+            connection_port=transport["port"],
+            connection_encrypted=transport["encrypted"],
+            connection_verify=transport["verify"],
         )
 
     def delete_site_connection(self, site_id: str) -> None:
