@@ -1,5 +1,6 @@
 import json
 import logging
+from typing import Optional
 
 import requests
 from dwlabbasicpy import dwlabSettings
@@ -94,11 +95,13 @@ class RestAPIcredentials:
         credentials=None,
         username=None,
         password=None,
+        connection_address: Optional[str] = None,
     ):
         self._cmkHostname = cmkHostname
         self._cmkDomain = cmkDomain
         self._cmkSiteName = cmkSiteName
         self._credentials = credentials
+        self._connection_address = connection_address
         self._username = None
         self._password = None
         if isinstance(username, str):
@@ -110,6 +113,11 @@ class RestAPIcredentials:
                 raise ValueError("Username and password must be provided, if credentials are not define")
             self._credentials = "Bearer " + self._username + " " + self._password
         self._version = Version.getVersion(self)
+
+    @property
+    def connection_address(self) -> Optional[str]:
+        """Optional literal connection IP; does not change the HTTPS identity."""
+        return getattr(self, "_connection_address", None)
 
     @property
     def cmkHostname(self):

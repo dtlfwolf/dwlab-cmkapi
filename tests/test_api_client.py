@@ -17,6 +17,10 @@ class _FakeSession:
         self.calls = []
         self.closed = False
         self.verify = True
+        self.mounts = {}
+
+    def mount(self, prefix, adapter):
+        self.mounts[prefix] = adapter
 
     def request(self, method, url, json=None, timeout=None):
         self.calls.append((method, url, json, dict(self.headers), timeout))
@@ -111,3 +115,25 @@ def test_rest_client_uses_explicit_timeout():
             3.5,
         )
     ]
+
+
+def test_explicit_target_disables_environment_routing_without_changing_url():
+    session = _FakeSession(_FakeResponse())
+    client = CheckmkRestClient("https://cmk.example.org/main/check_mk/api/1.0",
+        "Bearer token", session_factory=lambda: session, connection_address="127.0.0.1")
+    client.get("/version")
+    assert session.trust_env is False
+    assert set(session.mounts) == {"https://", "http://"}
+    assert session.calls[0][1] == "https://cmk.example.org/main/check_mk/api/1.0/version"
+    assert session.closed
+
+
+def test_credentials_preserve_explicit_connection_target():
+    class Credentials:
+        credentials = "Bearer token"
+        connection_address = "127.0.0.1"
+
+        def get_apiUrl(self, apiVersion=""):
+            return "https://cmk.example.org/main/check_mk/api/1.0"
+
+    assert CheckmkRestClient.from_credentials(Credentials()).connection_address == "127.0.0.1"

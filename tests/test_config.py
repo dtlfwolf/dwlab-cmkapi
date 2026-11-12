@@ -1,6 +1,7 @@
 from pathlib import Path
+import pytest
 
-from dwlabcmkapi.config import load_central_server_config
+from dwlabcmkapi.config import LocalApiConnectionPolicy, load_central_server_config
 from dwlabcmkapi.api_credentials import Version
 from dwlabcmkapi.settings_paths import (
     DEFAULT_SETTINGS_CANDIDATES,
@@ -19,7 +20,8 @@ def _fake_version(api_version="2.3"):
     )
 
 
-def test_load_central_server_config_builds_server_and_credentials(monkeypatch):
+@pytest.mark.parametrize("local_api,target", [(False, None), (True, "127.0.0.1")])
+def test_load_central_server_config_builds_server_and_credentials(monkeypatch, local_api, target):
     class FakeEnv:
         dwlab_package_home = "/opt/dwlab/dwlab-cmkcentralserver"
 
@@ -33,6 +35,7 @@ def test_load_central_server_config_builds_server_and_credentials(monkeypatch):
                 "ovpnNetworkDomain": "example",
                 "cmkadmin_username": "",
                 "cmkadmin_password": "pw",
+                "cmkLocalApiAddress": None,
             }
             return values[key]
 
@@ -42,7 +45,7 @@ def test_load_central_server_config_builds_server_and_credentials(monkeypatch):
     monkeypatch.setattr(config.dwlabSettings, "read_yaml", lambda path: FakeSettings())
     monkeypatch.setattr(Version, "getVersion", classmethod(lambda cls, cmk_access: _fake_version()))
 
-    result = load_central_server_config()
+    result = load_central_server_config(local_api=local_api)
 
     assert result.settings_file == Path("/opt/dwlab/dwlab-cmkcentralserver/etc/dw-lab_InstallationSettings.yaml")
     assert result.server.site_name == "central"
@@ -50,6 +53,18 @@ def test_load_central_server_config_builds_server_and_credentials(monkeypatch):
     assert result.server.managed_host_name("client01") == "client01.vpn.example"
     assert result.credentials.username == "cmkadmin"
     assert result.credentials.get_apiUrl() == "https://cmk.dwlab.local/central/check_mk/api/2.3"
+    assert result.credentials.connection_address == target
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "::1"])
+def test_local_policy_accepts_ipv4_and_ipv6_loopback(address):
+    assert LocalApiConnectionPolicy(address).address == address
+
+
+@pytest.mark.parametrize("address", ["localhost", "10.8.0.1", "0.0.0.0", ""])
+def test_local_policy_rejects_non_loopback_or_non_literal_addresses(address):
+    with pytest.raises(ValueError):
+        LocalApiConnectionPolicy(address)
 
 
 def test_resolve_central_server_settings_file_prefers_explicit_path():

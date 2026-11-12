@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from ipaddress import ip_address
 
 from dwlabbasicpy import dwlabRuntimeEnvironment, dwlabSettings
 
@@ -17,7 +18,24 @@ class CentralServerConfig:
     credentials: RestAPIcredentials
 
 
-def load_central_server_config(settings_file: str | Path | None = None) -> CentralServerConfig:
+@dataclass(frozen=True)
+class LocalApiConnectionPolicy:
+    """Explicit local routing without changing provider or VPN identities."""
+
+    address: str = "127.0.0.1"
+
+    def __post_init__(self) -> None:
+        if not ip_address(self.address).is_loopback:
+            raise ValueError("cmkLocalApiAddress must be a literal loopback IP address")
+
+    @classmethod
+    def from_settings(cls, settings: dwlabSettings) -> "LocalApiConnectionPolicy":
+        """Missing settings retain the reliable local-worker default."""
+        return cls(str(settings.get_variable("cmkLocalApiAddress") or "127.0.0.1"))
+
+
+def load_central_server_config(settings_file: str | Path | None = None, *,
+                              local_api: bool = False) -> CentralServerConfig:
     env = dwlabRuntimeEnvironment()
     settings_path = resolve_central_server_settings_file(settings_file)
 
@@ -46,6 +64,8 @@ def load_central_server_config(settings_file: str | Path | None = None) -> Centr
         cmkSiteName=cmk_site_name,
         username=username,
         password=password,
+        connection_address=(LocalApiConnectionPolicy.from_settings(settings).address
+                            if local_api else None),
     )
 
     return CentralServerConfig(

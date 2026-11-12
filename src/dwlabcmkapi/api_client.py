@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 import requests
+
+from .connection_target import AddressTargetHttpsAdapter
 
 
 def _default_verify_path() -> str | bool:
@@ -25,14 +27,16 @@ class CheckmkRestClient:
     base_url: str
     authorization: str
     session_factory: Callable[[], requests.Session] = requests.session
-    verify: str | bool = _default_verify_path()
+    verify: str | bool = field(default_factory=_default_verify_path)
     timeout: float = 10.0
+    connection_address: str | None = None
 
     @classmethod
     def from_credentials(cls, cmk_access, api_version: str = "") -> "CheckmkRestClient":
         return cls(
             base_url=cmk_access.get_apiUrl(apiVersion=api_version),
             authorization=cmk_access.credentials,
+            connection_address=getattr(cmk_access, "connection_address", None),
         )
 
     def request(
@@ -44,13 +48,18 @@ class CheckmkRestClient:
         headers: dict[str, str] | None = None,
     ) -> requests.Response:
         session = self.session_factory()
-        session.headers["Authorization"] = self.authorization
-        session.headers["Accept"] = "application/json"
-        session.verify = self.verify
-        if headers:
-            session.headers.update(headers)
-
         try:
+            if self.connection_address is not None:
+                # Environment proxies/netrc must not alter local management.
+                session.trust_env = False
+                adapter = AddressTargetHttpsAdapter(self.base_url, self.connection_address)
+                session.mount("https://", adapter)
+                session.mount("http://", adapter)
+            session.headers["Authorization"] = self.authorization
+            session.headers["Accept"] = "application/json"
+            session.verify = self.verify
+            if headers:
+                session.headers.update(headers)
             return session.request(
                 method=method,
                 url=f"{self.base_url}{path}",

@@ -97,3 +97,30 @@ Run independent regression tests with `make test`; build with `make wheel`.
 Tests cover first registration, unchanged/changed reconnects, invalid core
 addresses, delayed DNS, activation/probe failures, overlapping generations,
 command quoting, transport settings and queue recovery.
+
+## Local API Connections (0.22.0)
+
+The provider hostname remains the HTTPS identity. An explicit
+`RestAPIcredentials(..., connection_address="127.0.0.1")` or
+`CheckmkRestClient(..., connection_address="127.0.0.1")` changes only the network
+destination. HTTP Host, TLS SNI and certificate hostname verification retain the
+original URL hostname. Apache must listen on the chosen loopback address and
+serve the matching virtual host; its certificate chain must already be trusted.
+Do not add `localhost` to certificates or disable verification for this feature.
+
+`load_central_server_config(local_api=True)` selects `cmkLocalApiAddress` from
+installation settings, defaulting to `127.0.0.1` when absent. Only literal
+loopback IPs are allowed for this setting (`::1` is supported where listening).
+The default `local_api=False` and ordinary credentials keep normal DNS-based
+connections, so external callers can still select their VPN-facing hostname.
+
+Local address-target sessions bypass environment proxy/netrc settings. Explicit
+CA paths remain honored. HTTPS redirects are allowed only within the original
+scheme/hostname/port; other origins and HTTP downgrades are rejected before
+credentials are transmitted. Requests >= 2.32.3 and urllib3 >= 2.2.3 are required;
+the adapter uses the public TLS-context interface, not deprecated adapter hooks.
+
+The TLS integration tests start a disposable localhost HTTPS server and require
+`openssl` plus permission to bind a loopback socket. They verify DNS independence,
+Host/SNI, trusted and untrusted certificates, hostname mismatch, proxy bypass,
+and safe redirects. No running Checkmk instance is needed.
