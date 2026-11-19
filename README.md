@@ -2,6 +2,100 @@
 
 `dwlabcmkapi` provides a simple and extensible Python interface to interact with Checkmk servers, manage monitoring configurations, schedule backups, and integrate Checkmk operations into your custom workflows.
 
+## Credential Preparation Foundation (0.23.0)
+
+This is the first implementation increment for CMK-01, not its completed
+remediation. The existing central/client deployment flow is deliberately not
+rewired yet. No existing accounts or credentials are automatically changed.
+The shared runtime now requires independently installable `dwlabbasicpy>=0.23.0`.
+
+The opt-in local preparation API is implemented in
+`dwlabcmkapi.credential_bootstrap`. `NewSiteCredentialPreparation` uses explicit
+authorization, storage and native-backend interfaces. CLI calls require the
+effective OS root identity; environment usernames and SUDO_UID are not trusted.
+Dependency injection is for trusted in-process callers and tests, not a sandbox
+against arbitrary code already running in the privileged process.
+
+On a disposable host with Checkmk already installed, the preparatory command is:
+
+```bash
+sudo /opt/dwlab/venv/bin/python -m dwlabcmkapi.credential_bootstrap \
+  prepare-new-site --site example --site-uid 6000 --site-gid 6000
+```
+
+**Do not run this for an existing customer site or start the resulting site.**
+The command intentionally stops at `awaiting-accounts`, with
+`activation_allowed=false`. It does not yet create dwlabcmkadm or an automation
+account, verify their access, disable cmkadmin, or activate web services. Those
+operations and deployment integration are the next increment. LDAP integration
+is separate follow-up work. CMK-01 remains open until the complete workflow and
+artifact/runtime confidentiality checks pass.
+
+### Credential And Process Boundaries
+
+- The target generates three independent 256-bit secrets: temporary cmkadmin
+  bootstrap password, reserved dwlabcmkadm emergency password, and reserved
+  dwlab-automation secret. Reserved accounts are not yet created.
+- State lives in
+  `/var/lib/dwlab/dwlabcmkapi/credentials/<site>/credentials.json`, mode 0600,
+  in OS-owned 0700 directories. It is persistent recovery state, not general
+  installation YAML or a deployment artifact. Root is the production owner.
+- State is validated, exclusively locked per site, atomically replaced and
+  fsynced. Existing links, hardlinks, unsafe ownership/modes and malformed state
+  are rejected rather than silently repaired. Existing credentials never rotate
+  just because preparation is invoked again.
+- OMD creates a stopped site with `--no-autostart`. Its internally generated
+  initial password is not parsed or stored: stdout and stderr are discarded.
+  Our target-generated temporary password is then set with the supported
+  `cmk-passwd --stdin cmkadmin` command in the site's login environment.
+  Passwords are never command arguments, Docker environment variables or logs.
+- The native adapter currently accepts the Checkmk 2.4/2.5 release lines only.
+  It uses `/usr/bin/omd` and `/usr/sbin/runuser` (util-linux), requires an
+  existing Checkmk installation, and never installs OS packages. Native command
+  output is suppressed even on failure because it can contain secrets. Errors
+  report the operation and exit status, not the suppressed output.
+- Preparation never starts services, adopts existing sites, or rotates existing
+  customer credentials. AUTOSTART remains off. This does not prevent an OS
+  administrator from bypassing the workflow and manually forcing a site start.
+
+OMD's native stdin interface was verified against official Checkmk source:
+[2.4 cmk-passwd](https://github.com/Checkmk/checkmk/blob/2.4.0/cmk/cmkpasswd.py),
+[2.5 cmk-passwd](https://github.com/Checkmk/checkmk/blob/2.5.0/cmk/cmkpasswd.py),
+and [OMD creation/status semantics](https://github.com/Checkmk/checkmk/blob/2.4.0/omd/packages/omd/omdlib/main.py).
+
+### Retry, Upgrade And Removal
+
+New-site states advance from `prepared` to `creating`, `created` and
+`awaiting-accounts`. Failure while creating a site leaves `creating` and requires
+manual review: retry will not blindly adopt a partly created site. A failed
+password-setting step can resume from `created` with the same saved material,
+provided the site still exists and is stopped. A completed preparation is
+idempotent; missing sites or changed UID/GID fail closed. There is no automatic
+site recreation, credential regeneration or failed-site deletion.
+
+Package upgrades do not run this command. Existing deployments remain on their
+current behavior until explicitly migrated by the later integration increment.
+Back up this private state as sensitive credential material. Do not delete it
+after a failed attempt or remove the bootstrap password until replacement
+accounts have been provisioned and verified. Future finalization must remove
+the temporary password from persistent state; that transition is not implemented
+yet. Package removal must not delete site state or private credential backups.
+
+CLI output contains only site, phase, credential-file path and activation status;
+operational milestones use explicit UTC timestamps. No credential retrieval
+command is provided in this increment. Authorized root administrators can access
+the private file, but must not paste it into tickets, logs or public terminals.
+
+Standalone tests use temporary directories and fake native command runners:
+
+```bash
+python3 -m pytest -q tests/test_credential_bootstrap.py
+```
+
+They test authorization, per-site independence, privacy, safe retries and failure
+states without creating real sites. Native Checkmk/VM bootstrap acceptance is
+still required before integrating this into customer deployment.
+
 ## ✨ Features
 
 - Connect to and authenticate with Checkmk servers

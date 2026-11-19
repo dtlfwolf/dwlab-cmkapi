@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dwlabcmkapi"
-version = "0.22.0"
+version = "0.23.0"
 description = "DW-Lab CMK API"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -13,7 +13,7 @@ authors = [
 ]
 requires-python = ">=3.8"
 dependencies = [
-  "dwlabbasicpy>=0.20.0",
+  "dwlabbasicpy>=0.23.0",
   "dwlabbackup>=0.20.0",
   "requests>=2.32.3",
   "urllib3>=2.2.3"
