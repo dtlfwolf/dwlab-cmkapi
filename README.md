@@ -2,6 +2,14 @@
 
 `dwlabcmkapi` provides a simple and extensible Python interface to interact with Checkmk servers, manage monitoring configurations, schedule backups, and integrate Checkmk operations into your custom workflows.
 
+## Container Restart Safety (0.25.1)
+
+The existing-volume entrypoint receives only its validated, non-secret site ID
+in addition to the fixed subprocess environment. Credential values are never
+environment variables. Missing native site configuration blocks startup before
+the vendor entrypoint can accidentally recreate a damaged site. Consumers of
+the portable container bootstrap must use at least 0.25.1.
+
 ## Private Credential References (0.25.0)
 
 Both `load_central_server_config` and `RestAPIcredentials.fromFile` accept

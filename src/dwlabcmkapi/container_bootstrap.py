@@ -35,9 +35,15 @@ class ContainerSiteBootstrap:
         if exists:
             if state is None:
                 raise BootstrapError("Existing container site requires explicit credential migration before replacement.")
+            configuration = self._sites_root / site / "etc"
+            if (not configuration.is_dir() or configuration.is_symlink()
+                    or not (configuration / "omd/site.conf").is_file()):
+                raise BootstrapError("Existing container site configuration is damaged; automatic recreation is refused.")
             # Vendor entrypoint reconstructs OS accounts/version links for a mounted
             # volume, then exits for this non-default command without starting OMD.
-            result = self._backend._run(["/docker-entrypoint.sh", "/bin/true"])
+            result = self._backend._run([
+                "/usr/bin/env", f"CMK_SITE_ID={site}", "/docker-entrypoint.sh", "/bin/true",
+            ])
             if result.returncode:
                 raise BootstrapError("Cannot prepare the existing container site identity.")
         if state is None or state.phase in {"prepared", "creating", "created", "awaiting-accounts"}:
