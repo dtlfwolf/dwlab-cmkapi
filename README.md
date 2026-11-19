@@ -2,6 +2,16 @@
 
 `dwlabcmkapi` provides a simple and extensible Python interface to interact with Checkmk servers, manage monitoring configurations, schedule backups, and integrate Checkmk operations into your custom workflows.
 
+## Checkmk 2.5 Status-Only Connections (0.26.3)
+
+The site-connection gateway selects its payload from the target credential's
+Checkmk version, not another request's global version. Checkmk 2.4 retains its
+minimal disabled-replication object. Checkmk 2.5 receives its required complete
+object, with replication off, user synchronization disabled, extension/event
+replication off, TLS-error suppression off and the remote site untrusted by
+default. Its required broker-port field is inert while replication is disabled.
+Local client administration remains available; no central account is copied.
+
 ## Agent Download Restart Recovery (0.26.2)
 
 Version discovery uses the canonical `/api/1.0` route on both supported release

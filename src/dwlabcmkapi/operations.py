@@ -179,7 +179,9 @@ class SiteConnectionGateway:
         return self.list_all().getConnectedSite(site_id)
 
     def create_site_connection(self, site_connection):
-        payload = json.loads('{"site_config": ' + json.dumps(site_connection.extensions.to_dict()) + "}")
+        payload = {"site_config": site_connection.extensions.to_dict(
+            checkmk_version=self._cmk_access.version.checkmkVersion
+        )}
         response = self._client.post(
             "/domain-types/site_connection/collections/all",
             headers={"Content-Type": "application/json"},
@@ -191,7 +193,9 @@ class SiteConnectionGateway:
             raise RuntimeError(str(response.json()))
 
     def update_site_connection(self, site_connection):
-        payload = json.loads('{"site_config": ' + json.dumps(site_connection.extensions.to_dict()) + "}")
+        payload = {"site_config": site_connection.extensions.to_dict(
+            checkmk_version=self._cmk_access.version.checkmkVersion
+        )}
         response = self._client.put(
             "/objects/site_connection/" + site_connection.id,
             headers={"Content-Type": "application/json"},

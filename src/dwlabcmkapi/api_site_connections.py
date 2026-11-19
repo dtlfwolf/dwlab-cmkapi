@@ -227,7 +227,19 @@ class UserSync:
 
 
 class ConfigurationConnection:
-    def __init__(self, enable_replication=False, url_of_remote_site="http://", disable_remote_configuration=False, ignore_tls_errors=False, direct_login_to_web_gui_allowed=True, user_sync=None, replicate_event_console=True, replicate_extensions=True):
+    def __init__(
+        self,
+        enable_replication: bool = False,
+        url_of_remote_site: str = "http://",
+        disable_remote_configuration: bool = False,
+        ignore_tls_errors: bool = False,
+        direct_login_to_web_gui_allowed: bool = True,
+        user_sync: UserSync | None = None,
+        replicate_event_console: bool = True,
+        replicate_extensions: bool = True,
+        message_broker_port: int = 5672,
+        is_trusted: bool = False,
+    ) -> None:
         self._enable_replication = enable_replication
         self._url_of_remote_site = url_of_remote_site
         self._disable_remote_configuration = disable_remote_configuration
@@ -236,6 +248,8 @@ class ConfigurationConnection:
         self._user_sync = user_sync if isinstance(user_sync, UserSync) else UserSync()
         self._replicate_event_console = replicate_event_console
         self._replicate_extensions = replicate_extensions
+        self._message_broker_port = message_broker_port
+        self._is_trusted = is_trusted
 
     @property
     def url_of_remote_site(self):
@@ -245,12 +259,19 @@ class ConfigurationConnection:
     def url_of_remote_site(self, value):
         self._url_of_remote_site = value
 
-    def to_dict(self):
-        if api_credentials.VERSION.checkmk_version <= "2.2":
+    def to_dict(self, *, checkmk_version: str | None = None) -> dict:
+        """Select the target schema explicitly; retain the legacy caller fallback."""
+        version = checkmk_version or getattr(
+            api_credentials.VERSION, "checkmk_version", "2.4"
+        )
+        release = tuple(int(part) for part in version.split(".")[:2])
+        if release >= (2, 5):
+            return self.to_dict_2_5()
+        if release <= (2, 2):
             return self.to_dict_2_2()
         return self.to_dict_2_3()
 
-    def to_dict_2_2(self):
+    def to_dict_2_2(self) -> dict:
         return {
             "enable_replication": self._enable_replication,
             "url_of_remote_site": self._url_of_remote_site,
@@ -262,10 +283,23 @@ class ConfigurationConnection:
             "replicate_extensions": self._replicate_extensions,
         }
 
-    def to_dict_2_3(self):
+    def to_dict_2_3(self) -> dict:
         if self._enable_replication:
             return self.to_dict_2_2()
         return {"enable_replication": self._enable_replication}
+
+    def to_dict_2_5(self) -> dict:
+        """The 2.5 schema requires complete fields even when replication is off."""
+        data = self.to_dict_2_2()
+        data.update(
+            message_broker_port=self._message_broker_port,
+            is_trusted=self._is_trusted,
+        )
+        if not self._enable_replication:
+            data.update(user_sync={"sync_with_ldap_connections": "disabled"},
+                        replicate_event_console=False, replicate_extensions=False,
+                        ignore_tls_errors=False)
+        return data
 
 
 class Extensions:
@@ -286,11 +320,11 @@ class Extensions:
     def configuration_connection(self):
         return self._configuration_connection
 
-    def to_dict(self):
+    def to_dict(self, *, checkmk_version: str | None = None) -> dict:
         return {
             "basic_settings": self._basic_settings.to_dict(),
             "status_connection": self._status_connection.to_dict(),
-            "configuration_connection": self._configuration_connection.to_dict(),
+            "configuration_connection": self._configuration_connection.to_dict(checkmk_version=checkmk_version),
         }
 
 
@@ -407,6 +441,8 @@ class SiteConnection:
                 ),
                 replicate_event_console=dataDict["extensions"].get("configuration_connection", {}).get("replicate_event_console", True),
                 replicate_extensions=dataDict["extensions"].get("configuration_connection", {}).get("replicate_extensions", True),
+                message_broker_port=dataDict["extensions"].get("configuration_connection", {}).get("message_broker_port", 5672),
+                is_trusted=dataDict["extensions"].get("configuration_connection", {}).get("is_trusted", False),
             ),
         )
         return cls(
