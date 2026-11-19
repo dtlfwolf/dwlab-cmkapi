@@ -14,6 +14,7 @@ from .credential_bootstrap import (
 )
 from .account_bootstrap import NativeAccountTransport, SiteAccountCompletion
 from .account_activation import BootstrapChangeActivation
+from .container_runtime import ContainerRuntimePreparation
 
 
 class ContainerSiteBootstrap:
@@ -49,6 +50,9 @@ class ContainerSiteBootstrap:
                 raise BootstrapError("Cannot prepare the existing container site identity.")
         if state is None or state.phase in {"prepared", "creating", "created", "awaiting-accounts"}:
             NewSiteCredentialPreparation(self._store, self._backend).prepare(site, 1000, 1000)
+        with self._store.transaction(site) as transaction:
+            state = transaction.load()
+        ContainerRuntimePreparation(self._backend, self._sites_root).prepare(state)
         SiteAccountCompletion(self._store, self._transport).complete(site)
         for option, value in (
             ("APACHE_TCP_ADDR", "0.0.0.0"), ("APACHE_TCP_PORT", "5000"),
@@ -94,7 +98,10 @@ class ContainerBootstrapCli:
         logger.addHandler(handler)
         try:
             ContainerSiteBootstrap(SiteCredentialStore(args.credential_root)).configure(args.site)
-        except (BootstrapError, OSError, ValueError, KeyError) as error:
+        except BootstrapError as error:
+            logger.error("STEP FAIL: operation=cmk-container-bootstrap reason=%s; startup blocked", error)
+            return 1
+        except (OSError, ValueError, KeyError) as error:
             logger.error("STEP FAIL: operation=cmk-container-bootstrap failure=%s; startup blocked", type(error).__name__)
             return 1
         return 0

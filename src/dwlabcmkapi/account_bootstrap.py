@@ -76,9 +76,14 @@ class NativeAccountTransport:
                 stderr=subprocess.DEVNULL, check=False, timeout=120,
                 env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
             )
-            if result.returncode or len(result.stdout) > 131072:
+            if len(result.stdout) > 131072:
                 raise ValueError
             data = json.loads(result.stdout)
+            if result.returncode:
+                code = data.get("error") if isinstance(data, dict) else None
+                if code in {"native-filesystem-permission-denied", "native-dependency-unavailable"}:
+                    raise BootstrapError(f"Native account operation failed ({code}); sensitive diagnostics suppressed.")
+                raise ValueError
             if not isinstance(data, dict) or type(data.get("status")) is not int:
                 raise ValueError
             return data

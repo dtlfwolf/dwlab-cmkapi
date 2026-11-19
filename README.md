@@ -2,6 +2,19 @@
 
 `dwlabcmkapi` provides a simple and extensible Python interface to interact with Checkmk servers, manage monitoring configurations, schedule backups, and integrate Checkmk operations into your custom workflows.
 
+## Legacy Container Runtime Mountpoints (0.26.1)
+
+The removed Docker tmpfs mount can expose an empty root-owned `tmp` directory
+on a legacy volume. Only a recorded legacy migration may repair this empty
+directory's ownership. Symlinks, unexpected owners and nonempty root-owned
+directories require review; no recursive chown or permission widening occurs.
+The stopped site's own OS identity then runs Checkmk's native temporary-skeleton
+initializer. It neither starts services nor resets account/site configuration.
+Containers use disk-backed runtime storage, without privileged tmpfs mounting.
+Portable-bootstrap consumers must provide a child reaper, such as Docker
+`--init`, so temporary service shutdown cannot wait on unreaped daemon zombies.
+The init reaper is a lifecycle prerequisite, not an authorization mechanism.
+
 ## Scoped Bootstrap Activation (0.26.0)
 
 Account provisioning supports native Checkmk 2.4 and 2.5 registration APIs.

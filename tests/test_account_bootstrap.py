@@ -275,6 +275,16 @@ class TestNativeTransport:
             transport.request(state, "cmkadmin", state.bootstrap_password, "GET", "/objects/user_config/cmkadmin")
         assert state.bootstrap_password not in str(error.value)
 
+    @pytest.mark.parametrize("code", ["native-filesystem-permission-denied", "native-dependency-unavailable"])
+    def test_only_fixed_diagnostic_codes_are_exposed(self, tmp_path, code):
+        _, state, _, _ = TestAccountCompletion().fixture(tmp_path)
+        transport = NativeAccountTransport(
+            lambda cmd, **opts: subprocess.CompletedProcess(cmd, 1, json.dumps({"error": code}).encode()),
+            TestAuthorization(),
+        )
+        with pytest.raises(BootstrapError, match=code):
+            transport.request(state, "cmkadmin", state.bootstrap_password, "GET", "/objects/user_config/cmkadmin")
+
     def test_helper_failure_is_nonsecret(self, monkeypatch, capsys):
         secret = "secret-that-must-not-appear"
         monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(b"{}")))

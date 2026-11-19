@@ -11,6 +11,11 @@ from dwlabcmkapi.credential_bootstrap import (
 )
 
 
+@pytest.fixture(autouse=True)
+def runtime_preparation_is_tested_independently(monkeypatch):
+    monkeypatch.setattr(module.ContainerRuntimePreparation, "prepare", lambda *args: None)
+
+
 class Backend:
     def __init__(self, exists=True):
         self.existing = exists

@@ -135,9 +135,14 @@ class NativeAccountRunner:
             request = json.loads(raw)
             with open(os.devnull, "w") as sink, redirect_stdout(sink), redirect_stderr(sink):
                 result = self.execute(request)
-        except Exception:
+        except Exception as error:
             # Neither exceptions nor API error bodies may echo request secrets.
-            print(json.dumps({"error": "native-account-operation-failed"}))
+            code = "native-account-operation-failed"
+            if isinstance(error, PermissionError):
+                code = "native-filesystem-permission-denied"
+            elif isinstance(error, ImportError):
+                code = "native-dependency-unavailable"
+            print(json.dumps({"error": code}))
             return 1
         print(json.dumps(result))
         return 0
