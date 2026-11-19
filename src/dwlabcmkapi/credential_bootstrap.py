@@ -89,6 +89,8 @@ class CredentialTransaction:
                 data = json.loads(raw)
                 if not isinstance(data, dict) or data.pop("schema_version", None) != 1:
                     raise ValueError
+                if data.get("phase") == "accounts-ready":
+                    data.setdefault("bootstrap_password", "")
                 state = SiteCredentialState(**data)
                 self._validate(state)
                 return state
@@ -98,20 +100,27 @@ class CredentialTransaction:
             os.close(descriptor)
 
     def _validate(self, state: SiteCredentialState) -> None:
-        values = (state.bootstrap_password, state.emergency_password, state.automation_secret)
+        values = (state.emergency_password, state.automation_secret)
+        phases = {"prepared", "creating", "created", "awaiting-accounts",
+                  "provisioning-accounts", "retiring-bootstrap", "accounts-ready"}
+        if state.phase != "accounts-ready":
+            values += (state.bootstrap_password,)
         if (state.site != self._site
                 or type(state.uid) is not int or state.uid < 1
                 or type(state.gid) is not int or state.gid < 1
-                or state.phase not in {"prepared", "creating", "created", "awaiting-accounts"}
+                or state.phase not in phases
+                or (state.phase == "accounts-ready" and state.bootstrap_password != "")
                 or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
                        for value in values)
-                or len(set(values)) != 3):
+                or len(set(values)) != len(values)):
             raise BootstrapError("Invalid credential state; manual review required.")
 
     def save(self, state: SiteCredentialState) -> None:
         """Persist a complete record atomically, preserving secrets on retries."""
         self._validate(state)
         data = {"schema_version": 1, **vars(state)}
+        if state.phase == "accounts-ready":
+            del data["bootstrap_password"]
         temporary = f".credentials-{secrets.token_hex(16)}"
         descriptor = os.open(
             temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -307,6 +316,8 @@ class NewSiteCredentialPreparation:
                 self._logger.info("STEP PASS: operation=cmk-credential-prepare phase=generate-private-state site=%s", site)
             if (state.uid, state.gid) != (uid, gid):
                 raise BootstrapError("Requested UID/GID differ from the recorded preparation.")
+            if state.phase in {"provisioning-accounts", "retiring-bootstrap", "accounts-ready"}:
+                raise BootstrapError("Preparation has advanced; use complete-accounts for verification or recovery.")
             if state.phase == "creating":
                 raise BootstrapError("Interrupted site creation requires manual review; no automatic adoption.")
             if state.phase == "prepared":

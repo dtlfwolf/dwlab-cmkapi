@@ -2,6 +2,88 @@
 
 `dwlabcmkapi` provides a simple and extensible Python interface to interact with Checkmk servers, manage monitoring configurations, schedule backups, and integrate Checkmk operations into your custom workflows.
 
+## Replacement Accounts And Bootstrap Retirement (0.24.0)
+
+The independent core can now complete account provisioning on a new site
+prepared by the 0.23.0 foundation. It remains opt-in: existing installations,
+central/client deployment scripts and customer release bundles are not changed
+automatically. **CMK-01 remains open until deployment integration and complete
+fresh-install/upgrade acceptance have passed.**
+
+After `prepare-new-site` returns `awaiting-accounts`, run on the same stopped site:
+
+```bash
+sudo /opt/dwlab/venv/bin/python -m dwlabcmkapi.account_bootstrap \
+  complete-accounts --site example --run-id my-installation-run
+```
+
+Use the same `--credential-root` for both commands if overriding the default.
+`SiteAccountCompletion` is the shared root-authorized application service behind
+the CLI and Python API. It checks the site's existence, stopped status, recorded
+UID/GID and supported native version. It never starts services, enables autostart,
+changes firewall rules or opens a bootstrap listener.
+
+### Authenticated Provisioning Without A Listener
+
+The native adapter runs Checkmk's own WSGI application as the site's OS user.
+It sends real authenticated REST requests to Checkmk's versioned user-management
+endpoints in process, rather than opening a TCP socket or editing users.mk and
+htpasswd directly. It does not inject REMOTE_USER, trust identity headers, bypass
+authentication or retain login cookies between credential proofs. The WSGI base
+URL is request metadata, not a remote HTTPS connection or disabled TLS check.
+The supported site release lines are 2.4/2.5; the vendor-specific WSGI factory and
+plugin initialization are version-scoped adapter details, not a stable public
+Checkmk SDK. Revalidate the native adapter when upgrading Checkmk.
+
+Secrets travel to site Python only through a stdin pipe, never arguments or
+environment variables. The installed helper code is passed from this wheel;
+site Python does not need DW-Lab packages or another source checkout. Native
+stdout is reduced to status, ETag and explicitly selected non-secret account
+attributes. Error bodies, exceptions and stderr are not forwarded into ordinary
+DW-Lab logs. Checkmk remains the authentication and authorization owner; this
+does not introduce a DW-Lab login service or separate user registry.
+
+### Account And Recovery Contract
+
+- `dwlabcmkadm` is a local Checkmk emergency administrator, with its own site's
+  generated password and normal interactive-password authentication.
+- `dwlab-automation` is a separate per-site machine account with an automation
+  secret. Checkmk's extra plaintext automation-secret copy is disabled; the
+  independently protected DW-Lab credential record retains the caller secret.
+- Both accounts currently receive Checkmk's `admin` role, explicitly matching
+  the administrative bootstrap/user-retirement operations and current broad
+  site-management contract. This is not an OS root grant or a claim of a narrowed
+  catalog-only role. Operational role refinement is a prerequisite to production
+  rollout, alongside deployment integration. LDAP users and role mappings remain
+  separate follow-up work.
+- Before recording mutation intent, unexpected existing replacement accounts
+  are refused. A retry may reuse an account only after authenticating with its
+  already-recorded secret and verifying its expected role/authentication mode;
+  mismatches are not repaired by overwriting customer accounts or passwords.
+- The durable phases are `provisioning-accounts`, `retiring-bootstrap` and
+  `accounts-ready`. Both replacements must independently authenticate with
+  administrative API access before retirement proceeds.
+- Retirement uses the automation identity and Checkmk's ETag/If-Match contract
+  to disable cmkadmin and remove its password authentication. The service checks
+  the disabled state and proves the old bootstrap credential receives 401/403.
+  Only then is the bootstrap-password field removed from credentials.json.
+- If a command fails after retirement but before saving final state, the next
+  invocation uses the permanent accounts to finish safely. It does not need a
+  working bootstrap account. Successful retries in accounts-ready are read-only.
+  Failed completion retains private recovery material and never activates a site.
+
+The result reports `credential_gate_passed=true` and `activation_performed=false`.
+This proves credential readiness at invocation time, not TLS/network readiness
+or permission to bypass subsequent installation checks. Activation integration
+must call this verification service and check success, not trust a persisted
+`accounts-ready` string by itself. AUTOSTART remains off until a later explicitly
+approved activation workflow. OS root can still bypass the workflow manually.
+
+The format retains schema version 1 with new phases; older core versions fail
+closed on those phases. Do not downgrade a completed site to the preparatory
+0.23.0 implementation. Back up private state and site configuration together.
+Package upgrades/removal never invoke provisioning or delete credential state.
+
 ## Credential Preparation Foundation (0.23.0)
 
 This is the first implementation increment for CMK-01, not its completed
@@ -24,12 +106,12 @@ sudo /opt/dwlab/venv/bin/python -m dwlabcmkapi.credential_bootstrap \
 ```
 
 **Do not run this for an existing customer site or start the resulting site.**
-The command intentionally stops at `awaiting-accounts`, with
-`activation_allowed=false`. It does not yet create dwlabcmkadm or an automation
-account, verify their access, disable cmkadmin, or activate web services. Those
-operations and deployment integration are the next increment. LDAP integration
-is separate follow-up work. CMK-01 remains open until the complete workflow and
-artifact/runtime confidentiality checks pass.
+The preparation command intentionally stops at `awaiting-accounts`, with
+`activation_allowed=false`. Use the separate 0.24.0 completion operation above
+to provision and verify replacement accounts and retire cmkadmin. Neither
+command activates web services. Deployment and LDAP integration remain follow-up
+work. CMK-01 remains open until the complete workflow and artifact/runtime
+confidentiality checks pass.
 
 ### Credential And Process Boundaries
 
@@ -78,8 +160,9 @@ current behavior until explicitly migrated by the later integration increment.
 Back up this private state as sensitive credential material. Do not delete it
 after a failed attempt or remove the bootstrap password until replacement
 accounts have been provisioned and verified. Future finalization must remove
-the temporary password from persistent state; that transition is not implemented
-yet. Package removal must not delete site state or private credential backups.
+the temporary password from persistent state; 0.24.0 implements this transition
+only after replacement-account and bootstrap-denial proofs. Package removal must
+not delete site state or private credential backups.
 
 CLI output contains only site, phase, credential-file path and activation status;
 operational milestones use explicit UTC timestamps. No credential retrieval
