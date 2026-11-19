@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 
 from dwlabcmkapi.api_client import CheckmkRestClient
 from dwlabcmkapi.api_credentials import RestAPIcredentials, Version
@@ -13,6 +14,26 @@ def _fake_version(api_version="2.3"):
         edition="enterprise",
         demo=False,
     )
+
+
+def test_version_discovery_uses_the_cross_release_api_alias(monkeypatch):
+    credential = RestAPIcredentials.__new__(RestAPIcredentials)
+    calls = []
+
+    def create_client(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(get=lambda path: SimpleNamespace(status_code=200, json=lambda: {
+            "site": "central", "rest_api": {"revision": "0"},
+            "versions": {"checkmk": "2.5.0p11"}}))
+
+    monkeypatch.setattr(credential, "create_client", create_client)
+    version = Version.getVersion(credential)
+    assert calls == [{"apiVersion": "1.0"}]
+    assert version.apiVersion == "0"
+    assert version.apiPathVersion == "1.0"
+    credential._version = version
+    credential._cmkHostname, credential._cmkDomain, credential._cmkSiteName = "central", "example.test", "central"
+    assert credential.get_apiUrl().endswith("/check_mk/api/1.0")
 
 
 def test_rest_api_credentials_builds_bearer_token(monkeypatch):

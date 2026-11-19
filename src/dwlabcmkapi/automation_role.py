@@ -17,10 +17,12 @@ class AutomationRoleProvisioner:
         "wato.download_agents",
         "wato.services", "wato.service_discovery_to_monitored",
         "wato.service_discovery_to_undecided",
+        "wato.service_discovery_to_removed",
     })
     REQUIRED = frozenset({"general.use", "wato.use", "wato.edit", "wato.sites",
                           "wato.activate", "wato.manage_hosts", "wato.edit_hosts",
-                          "wato.services"})
+                          "wato.services", "wato.service_discovery_to_monitored",
+                          "wato.service_discovery_to_removed"})
 
     def __init__(self, transport) -> None:
         self._transport = transport

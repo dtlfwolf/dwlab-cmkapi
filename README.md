@@ -2,6 +2,30 @@
 
 `dwlabcmkapi` provides a simple and extensible Python interface to interact with Checkmk servers, manage monitoring configurations, schedule backups, and integrate Checkmk operations into your custom workflows.
 
+## Agent Download Restart Recovery (0.26.2)
+
+Version discovery uses the canonical `/api/1.0` route on both supported release
+lines. The confirmed transport route remains separate from the reported API
+schema revision: Checkmk 2.5 reports revision `0`, which is not an endpoint path.
+Explicitly selected client API routes retain their existing behavior.
+`Version.apiVersion` retains the reported revision for compatibility;
+`Version.apiPathVersion` identifies the proven route used by default clients.
+
+Checkmk's add-only discovery mode uses its bulk-update permission check, which
+requires both `wato.service_discovery_to_monitored` and
+`wato.service_discovery_to_removed`. The restricted role explicitly includes
+that vendor-required service-management capability. Reconciliation still sends
+`mode=new`; it does not request removal. User/role administration, foreign
+activation and foreign background-job management remain denied. Earlier
+pre-release private account states/roles need explicit review, not silent
+permission expansion or credential regeneration.
+
+API readiness can briefly precede the bootstrap runtime's controlled shutdown.
+Agent downloads retry a whole private staging batch after connection loss,
+timeout or interrupted streaming, within one monotonic deadline. Existing
+agents remain untouched during failed attempts. Authentication, redirects,
+unsafe filenames and invalid content remain terminal failures, not retries.
+
 ## Legacy Container Runtime Mountpoints (0.26.1)
 
 The removed Docker tmpfs mount can expose an empty root-owned `tmp` directory

@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+import requests
 
 from dwlabcmkapi.agent_download import LocalAgentDownloader
 from dwlabcmkapi.credential_bootstrap import BootstrapError, RootBootstrapAuthorization
@@ -49,7 +50,10 @@ class Session:
     def get(self, url, **kwargs):
         self.calls.append((url, kwargs))
         assert "Authorization" in self.headers
-        return next(self.responses)
+        response = next(self.responses)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 @pytest.fixture(autouse=True)
@@ -100,3 +104,48 @@ def test_wait_is_bounded_without_swallowing_safety_errors(tmp_path):
     with pytest.raises(BootstrapError, match="Timed out"):
         LocalAgentDownloader(Pending(), clock=lambda: next(times)).download(
             "client", Path("/private/ref"), 8080, tmp_path, timeout=1)
+
+
+def test_restart_after_readiness_retries_the_whole_batch_without_partial_publish(tmp_path):
+    (tmp_path / "previous.deb").write_bytes(b"previous")
+    session = Session([Response(), Response(name="discard.deb"), requests.ConnectionError("restart"),
+                       Response(), Response(name="agent.deb"), Response(name="agent.rpm"), Response(name="agent.msi")])
+    sleeps = []
+
+    def sleep(delay):
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["previous.deb"]
+        sleeps.append(delay)
+
+    LocalAgentDownloader(Provider(), lambda: session, sleep=sleep).download(
+        "client", Path("/private/ref"), 8080, tmp_path)
+    assert sleeps == [5]
+    assert {p.name for p in tmp_path.iterdir()} == {"previous.deb", "agent.deb", "agent.rpm", "agent.msi"}
+
+
+def test_repeated_transport_failure_is_bounded(tmp_path):
+    session = Session([Response(), requests.ConnectionError("restart")])
+    now = [0]
+
+    def sleep(delay):
+        now[0] += delay
+
+    with pytest.raises(BootstrapError, match="Timed out"):
+        LocalAgentDownloader(Provider(), lambda: session, clock=lambda: now[0], sleep=sleep).download(
+            "client", Path("/private/ref"), 8080, tmp_path, timeout=1)
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("status", [301, 401, 403, 500])
+def test_batch_authentication_redirect_and_server_errors_are_not_transient(tmp_path, status):
+    session = Session([Response(), Response(status)])
+    with pytest.raises(BootstrapError):
+        LocalAgentDownloader(Provider(), lambda: session).download("client", Path("/private/ref"), 8080, tmp_path)
+    assert len(session.calls) == 2
+    assert not list(tmp_path.iterdir())
+
+
+def test_tls_failure_is_never_retried(tmp_path):
+    session = Session([Response(), requests.exceptions.SSLError("untrusted")])
+    with pytest.raises(requests.exceptions.SSLError):
+        LocalAgentDownloader(Provider(), lambda: session).download("client", Path("/private/ref"), 8080, tmp_path)
+    assert len(session.calls) == 2

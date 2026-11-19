@@ -23,10 +23,14 @@ def set_version(version):
 
 
 class Version:
-    def __init__(self, site, group, rest_api, versions, edition, demo):
+    def __init__(self, site, group, rest_api, versions, edition, demo,
+                 api_path_version: Optional[str] = None):
         self.site = site
         self.group = group
         self.rest_api_revision = rest_api.get("revision", "")
+        # Metadata revisions are not endpoint paths (Checkmk 2.5 reports "0").
+        # Preserve direct-constructor compatibility; discovery pins its proven route.
+        self._api_path_version = str(api_path_version if api_path_version is not None else self.rest_api_revision)
         self.checkmk_version = versions.get("checkmk", "")
         self.edition = edition
         self.demo = demo
@@ -36,7 +40,7 @@ class Version:
     def getVersion(cls, cmkAccess):
         if not isinstance(cmkAccess, RestAPIcredentials):
             raise TypeError("cmkAccess must be an instance of RestAPIcredentials")
-        client = cmkAccess.create_client(apiVersion="1.0.0")
+        client = cmkAccess.create_client(apiVersion="1.0")
         try:
             resp = client.get("/version")
             if resp.status_code == 200:
@@ -55,6 +59,7 @@ class Version:
             versions=json_data.get("versions", {}),
             edition=json_data.get("edition", ""),
             demo=json_data.get("demo", False),
+            api_path_version="1.0",
         )
 
     def to_dict(self):
@@ -77,6 +82,12 @@ class Version:
     @apiVersion.setter
     def apiVersion(self, value):
         self.rest_api_revision = value
+        self._api_path_version = str(value)
+
+    @property
+    def apiPathVersion(self) -> str:
+        """The confirmed transport route, separate from the reported schema revision."""
+        return self._api_path_version
 
     @property
     def checkmkVersion(self):
@@ -183,7 +194,7 @@ class RestAPIcredentials:
 
     def get_apiUrl(self, apiVersion=""):
         if apiVersion == "":
-            apiVersion = self.version.apiVersion
+            apiVersion = getattr(self.version, "apiPathVersion", self.version.apiVersion)
         return (
             "https://"
             + str(self._cmkHostname)

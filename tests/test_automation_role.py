@@ -19,6 +19,9 @@ def test_policy_denies_user_administration_and_unknown_permissions():
     policy.provision(state)
     assert "wato.users" not in transport.role["permissions"]
     assert "wato.sites" in transport.role["permissions"]
+    assert "wato.service_discovery_to_removed" in transport.role["permissions"]
+    assert "wato.activateforeign" not in transport.role["permissions"]
+    assert "background_jobs.stop_foreign_jobs" not in transport.role["permissions"]
     assert transport.role["basedon"] == "user"
 
 
@@ -29,7 +32,8 @@ def test_preexisting_role_not_adopted():
         policy.assert_absent(state)
 
 
-@pytest.mark.parametrize("permission", ["wato.users", "new.privilege"])
+@pytest.mark.parametrize("permission", ["wato.users", "new.privilege", "wato.activateforeign",
+                                       "background_jobs.stop_foreign_jobs", "background_jobs.delete_foreign_jobs"])
 def test_expanded_role_rejected_on_verification(permission):
     state, transport, policy = fixture()
     policy.provision(state)

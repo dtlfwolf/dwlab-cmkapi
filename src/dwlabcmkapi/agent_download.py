@@ -56,30 +56,45 @@ class LocalAgentDownloader:
             session.trust_env = False
             session.headers.update({"Authorization": f"Bearer {credential.username} {credential.secret}"})
             while True:
+                self._wait_for_api(session, root, site, deadline)
                 try:
-                    response = session.get(root + "/version", timeout=10, allow_redirects=False)
-                except requests.RequestException:
+                    with tempfile.TemporaryDirectory(prefix=".agents-", dir=destination) as temporary:
+                        files = []
+                        for os_type, suffix in self.FORMATS.items():
+                            path = self._download_one(session, root, os_type, suffix, Path(temporary), deadline)
+                            files.append(path)
+                        for path in files:
+                            os.replace(path, destination / path.name)
+                        self._logger.info("STEP PASS: operation=cmk-agent-download phase=publish site=%s files=%s", site, len(files))
+                    return
+                except requests.exceptions.SSLError:
+                    raise
+                except (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError) as error:
+                    self._logger.info("STEP RETRY: operation=cmk-agent-download phase=transient-runtime-restart site=%s failure=%s", site, type(error).__name__)
                     self._wait(deadline)
-                    continue
-                with response:
-                    if response.status_code in {401, 403}:
-                        raise BootstrapError("Local agent API rejected automation authentication.")
-                    if 300 <= response.status_code < 400:
-                        raise BootstrapError("Local agent API redirects are not allowed.")
-                    if response.status_code == 200:
-                        identity = response.json()
-                        if isinstance(identity, dict) and identity.get("site") == site:
-                            break
+
+    def _wait_for_api(self, session: requests.Session, root: str, site: str, deadline: float) -> None:
+        while True:
+            if self._clock() >= deadline:
+                raise BootstrapError("Timed out waiting for local Checkmk API readiness.")
+            try:
+                response = session.get(root + "/version", timeout=10, allow_redirects=False)
+            except requests.exceptions.SSLError:
+                raise
+            except (requests.ConnectionError, requests.Timeout):
                 self._wait(deadline)
-            self._logger.info("STEP PASS: operation=cmk-agent-download phase=authenticated-api-ready site=%s", site)
-            with tempfile.TemporaryDirectory(prefix=".agents-", dir=destination) as temporary:
-                files = []
-                for os_type, suffix in self.FORMATS.items():
-                    path = self._download_one(session, root, os_type, suffix, Path(temporary))
-                    files.append(path)
-                for path in files:
-                    os.replace(path, destination / path.name)
-                self._logger.info("STEP PASS: operation=cmk-agent-download phase=publish site=%s files=%s", site, len(files))
+                continue
+            with response:
+                if response.status_code in {401, 403}:
+                    raise BootstrapError("Local agent API rejected automation authentication.")
+                if 300 <= response.status_code < 400:
+                    raise BootstrapError("Local agent API redirects are not allowed.")
+                if response.status_code == 200:
+                    identity = response.json()
+                    if isinstance(identity, dict) and identity.get("site") == site:
+                        self._logger.info("STEP PASS: operation=cmk-agent-download phase=authenticated-api-ready site=%s", site)
+                        return
+            self._wait(deadline)
 
     def _wait(self, deadline: float) -> None:
         remaining = deadline - self._clock()
@@ -88,9 +103,12 @@ class LocalAgentDownloader:
         self._sleep(min(5, remaining))
 
     def _download_one(self, session, root: str, os_type: str,
-                      suffix: str, destination: Path) -> Path:
+                      suffix: str, destination: Path, deadline: float) -> Path:
+        remaining = deadline - self._clock()
+        if remaining <= 0:
+            raise BootstrapError("Timed out downloading local Checkmk agents.")
         with session.get(root + "/domain-types/agent/actions/download/invoke",
-                         params={"os_type": os_type}, timeout=120,
+                         params={"os_type": os_type}, timeout=min(120, remaining),
                          allow_redirects=False, stream=True) as response:
             if response.status_code != 200:
                 raise BootstrapError(f"Agent download failed for {os_type} (HTTP {response.status_code}).")
@@ -106,6 +124,8 @@ class LocalAgentDownloader:
             total = 0
             with path.open("xb") as stream:
                 for block in response.iter_content(65536):
+                    if self._clock() >= deadline:
+                        raise BootstrapError("Timed out streaming a local Checkmk agent.")
                     total += len(block)
                     if total > 200 * 1024 * 1024:
                         raise BootstrapError("Agent download exceeds its size limit.")
@@ -134,7 +154,10 @@ class AgentDownloadCli:
         logger.addHandler(handler)
         try:
             LocalAgentDownloader(logger=logger).download(args.site, args.credential_file, args.port, args.destination)
-        except (BootstrapError, OSError, ValueError, requests.RequestException) as error:
+        except BootstrapError as error:
+            logger.error("STEP FAIL: operation=cmk-agent-download reason=%s", error)
+            return 1
+        except (OSError, ValueError, requests.RequestException) as error:
             logger.error("STEP FAIL: operation=cmk-agent-download failure=%s", type(error).__name__)
             return 1
         return 0
