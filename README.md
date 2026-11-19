@@ -2,6 +2,116 @@
 
 `dwlabcmkapi` provides a simple and extensible Python interface to interact with Checkmk servers, manage monitoring configurations, schedule backups, and integrate Checkmk operations into your custom workflows.
 
+## Private Credential References (0.25.0)
+
+Both `load_central_server_config` and `RestAPIcredentials.fromFile` accept
+`cmkCredentialsFile` in installation settings. The value is an absolute reference
+to this site's target-generated private state, for example:
+
+```yaml
+cmkSite: central
+cmkCredentialsFile: /var/lib/dwlab/dwlabcmkapi/credentials/central/credentials.json
+```
+
+The reference contains no password. Resolving it requires OS root, mode 0700
+credential directories, a singly linked mode 0600 file, trusted directory
+ancestry and `accounts-ready` state. Only the automation identity is returned;
+the emergency password is not used by ordinary API consumers. Missing, unsafe,
+incomplete or mismatched references fail closed, even if old password settings
+are also present. Existing HTTPS identity and loopback routing policies remain
+unchanged.
+
+For a reviewed upgrade, complete the existing site's credential migration before
+adding the reference. Do not point at another site's state or copy credential
+files into a release bundle. Legacy `cmkadmin_username`/`cmkadmin_password` remain
+temporarily readable when no reference is configured, with a migration warning.
+This compatibility path does not perform migration or rotate existing accounts.
+Removing the reference deliberately re-enables that compatibility path; remove
+retired plaintext settings as part of the reviewed migration, not beforehand.
+
+### Explicit Existing-Site Migration
+
+Stop the site during an approved maintenance window. Keep a VM/system recovery
+snapshot as well. The independent core adapter never starts services itself:
+
+```bash
+sudo /opt/dwlab/venv/bin/python -m dwlabcmkapi.site_installation \
+  migrate-existing-site \
+  --settings /opt/dwlab/dwlab-cmkcentralserver/etc/dw-lab_InstallationSettings.yaml \
+  --approve-existing-site
+```
+
+The settings file must be root-owned, singly linked and mode 0600. The old
+password is read in memory, not accepted as an argument or environment variable.
+Existing replacement users or a matching role are refused before migration
+intent is recorded. The original password must authenticate; migration does not
+reset it to gain access. A private `before-migration.tar.gz` preserves site `etc`
+and `var/check_mk/web` before account changes. This is an account-configuration
+recovery backup, not a complete monitoring-data/system backup. Symlinks remain
+links, existing archives are never overwritten, and backup failure blocks all
+account mutation. Interrupted backup creation requires manual review.
+
+Successful account completion publishes the credential reference, removes old
+password/username keys and preserves a private `settings.before-bootstrap.yaml`.
+The original settings and backup can contain retired passwords: protect them as
+secrets. Concurrent settings changes are refused rather than overwritten. A
+failed migration retains private recovery state and leaves activation blocked.
+Successful retries verify accounts again, without rotating credentials. Do not
+roll back only the YAML after retiring the old account: restore site account
+configuration and its private credential state consistently.
+
+For a new stopped site, use `provision-new-site --settings FILE` instead. The
+existing-site approval flag is not an automatic adoption or migration switch
+for ordinary package installation.
+
+### Restricted Automation Role
+
+Starting with 0.25.0, new account completion creates `dwlab_automation`, based on
+Checkmk's `user` role, explicitly disabling target-registered permissions outside
+the reviewed host/site/activation allowlist. `dwlabcmkadm` remains the emergency
+administrator. It performs bootstrap retirement; the machine account no longer
+needs user or role administration. Every verification independently authenticates
+the machine account and checks that user-management access is rejected.
+Permission expansion fails verification instead of silently being accepted.
+
+Existing 0.24.0 prepared/completed accounts with an admin automation role require
+review; they are not silently converted by an upgrade. Historical documentation
+below describes the 0.24.0 foundation, not the new restricted-role contract.
+
+This core release does not by itself rewire existing deployment scripts or
+generated customer packages. Deployment integration and VM acceptance remain
+necessary before closing CMK-01.
+
+### Container And Agent Adapters
+
+`PortableBootstrapBundle` exports exact, checksummed core bootstrap sources under
+an isolated namespace for generated Docker contexts. It contains no settings or
+credentials and does not require pip/wheels inside the Checkmk image. Persistent
+target-generated state must be mounted privately; it must never enter an image
+layer. `ContainerSiteBootstrap` verifies credentials before enabling autostart.
+The caller must not start VPN/HTTP services before this gate succeeds. The native
+site data-plane listener uses container port 5000; published ports, VPN routing
+and firewall restrictions remain deployment-owned policies.
+
+Existing legacy containers require explicit `container_migration prepare --site
+SITE --credential-root ROOT --approve-existing-site` before replacement. Use an
+installed 0.25.0 runtime and an approved recovery snapshot. This stops the old
+site and privately backs up its account configuration; it reads the old password
+from the local Docker daemon in memory without echoing inspect output. It does
+not retire accounts itself. A failed backup leaves the old container available
+for recovery but its site may be stopped: review before restarting or retrying.
+The later container bootstrap must verify replacements before retiring old access.
+The `check` operation is the pre-removal guard. Existing state/archives are not
+overwritten. Historical `.netrc`, packages, logs and recovery copies can contain
+retired passwords; their private retention/removal requires installation review.
+
+`python -m dwlabcmkapi.agent_download --site SITE --credential-file FILE --port
+8080 --destination DIR` uses only literal loopback HTTP, with environment proxy
+and netrc handling disabled. Authentication stays in memory, redirects are
+rejected, readiness waiting is bounded and uses a monotonic clock, filenames and
+download sizes are restricted, and incomplete downloads are not published.
+This is a target-local adapter, not permission for unencrypted remote APIs.
+
 ## Replacement Accounts And Bootstrap Retirement (0.24.0)
 
 The independent core can now complete account provisioning on a new site

@@ -5,6 +5,7 @@ from ipaddress import ip_address
 from dwlabbasicpy import dwlabRuntimeEnvironment, dwlabSettings
 
 from .api_credentials import RestAPIcredentials
+from .credential_provider import SettingsCredentialResolver
 from .domain import CentralServer, CmkSiteIdentity
 from .settings_paths import resolve_central_server_settings_file
 
@@ -46,8 +47,7 @@ def load_central_server_config(settings_file: str | Path | None = None, *,
     cmk_site_name = settings.get_variable("cmkSite")
     ovpn_network = settings.get_variable("ovpnNetwork")
     ovpn_network_domain = settings.get_variable("ovpnNetworkDomain")
-    username = settings.get_variable("cmkadmin_username") or "cmkadmin"
-    password = settings.get_variable("cmkadmin_password")
+    authentication = SettingsCredentialResolver().resolve(settings, cmk_site_name)
 
     server = CentralServer(
         identity=CmkSiteIdentity(
@@ -62,8 +62,8 @@ def load_central_server_config(settings_file: str | Path | None = None, *,
         cmkHostname=central_hostname,
         cmkDomain=central_domain,
         cmkSiteName=cmk_site_name,
-        username=username,
-        password=password,
+        username=authentication.username,
+        password=authentication.secret,
         connection_address=(LocalApiConnectionPolicy.from_settings(settings).address
                             if local_api else None),
     )

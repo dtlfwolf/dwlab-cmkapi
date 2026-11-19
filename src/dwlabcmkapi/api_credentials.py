@@ -6,6 +6,7 @@ import requests
 from dwlabbasicpy import dwlabSettings
 
 from .api_client import CheckmkRestClient
+from .credential_provider import SettingsCredentialResolver
 from .settings_paths import resolve_central_server_settings_file
 
 logger = logging.getLogger(__name__)
@@ -209,11 +210,7 @@ class RestAPIcredentials:
             raise RuntimeError("Cannot read installation setting.")
 
         cmkSite = dwlab_IS.get_variable("cmkSite")
-        username = dwlab_IS.get_variable("cmkadmin_username")
-        password = dwlab_IS.get_variable("cmkadmin_password")
-        if username == "":
-            username = "cmkadmin"
-        credentials = "Bearer " + username + " " + password
+        authentication = SettingsCredentialResolver().resolve(dwlab_IS, cmkSite)
 
         cmkHostname = dwlab_IS.get_variable("centralHostname")
         cmkDomain = dwlab_IS.get_variable("centralDomain")
@@ -222,7 +219,6 @@ class RestAPIcredentials:
             cmkHostname=cmkHostname,
             cmkDomain=cmkDomain,
             cmkSiteName=cmkSite,
-            credentials=credentials,
-            username=username,
-            password=password,
+            username=authentication.username,
+            password=authentication.secret,
         )

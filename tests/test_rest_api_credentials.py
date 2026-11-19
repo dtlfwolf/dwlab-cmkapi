@@ -44,6 +44,7 @@ def test_rest_api_credentials_from_file_uses_dwlab_settings(monkeypatch):
         def get_variable(self, key):
             values = {
                 "cmkSite": "central",
+                "cmkCredentialsFile": None,
                 "cmkadmin_username": "",
                 "cmkadmin_password": "pw",
                 "centralHostname": "cmk",

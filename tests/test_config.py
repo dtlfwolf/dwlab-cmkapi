@@ -36,6 +36,7 @@ def test_load_central_server_config_builds_server_and_credentials(monkeypatch, l
                 "cmkadmin_username": "",
                 "cmkadmin_password": "pw",
                 "cmkLocalApiAddress": None,
+                "cmkCredentialsFile": None,
             }
             return values[key]
 

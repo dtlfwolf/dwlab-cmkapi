@@ -17,6 +17,7 @@ from dwlabcmkapi.credential_bootstrap import (
     BootstrapError, NewSiteCredentialPreparation, SiteCredentialStore,
 )
 from dwlabcmkapi.native_account_runner import NativeAccountRunner
+from dwlabcmkapi.automation_role import AutomationRoleProvisioner
 from tests.test_credential_bootstrap import FakeBackend, TestAuthorization
 
 
@@ -30,6 +31,7 @@ class FakeTransport:
         self.fail_after_retirement = False
         self.accept_old_password = False
         self.etag = '"verified-etag"'
+        self.role = None
 
     def user(self, secret, auth_type):
         return {"secret": secret, "roles": ["admin"], "disabled": False,
@@ -46,6 +48,16 @@ class FakeTransport:
         elif (actor is None or actor["secret"] != password or actor["disabled"]
               or self.fail_verification == username):
             return {"status": 401}
+        if username == "dwlab-automation":
+            return {"status": 200 if path == "/version" else 403}
+        if "/user_role/" in path:
+            if method == "POST":
+                self.role = {"id": AutomationRoleProvisioner.NAME, "builtin": False,
+                             "basedon": "user", "permissions": list(AutomationRoleProvisioner.ALLOWED | {"wato.users"}),
+                             "available_permissions": list(AutomationRoleProvisioner.ALLOWED | {"wato.users"})}
+            elif method == "PUT":
+                self.role["permissions"] = [key for key, value in body["new_permissions"].items() if value == "yes"]
+            return {"status": 200, "role": self.role} if self.role else {"status": 404}
         account = path.rsplit("/", 1)[-1]
         if method == "GET":
             if account not in self.users:
@@ -64,7 +76,7 @@ class FakeTransport:
             self.users[account]["roles"] = body["roles"]
             return {"status": 200}
         if method == "PUT":
-            assert username == "dwlab-automation"
+            assert username == "dwlabcmkadm"
             assert body == {"disable_login": True, "auth_option": {"auth_type": "remove"}}
             assert etag == self.etag
             if self.fail_retirement:
@@ -102,9 +114,10 @@ class TestAccountCompletion:
         assert state.emergency_password == original.emergency_password
         assert state.automation_secret == original.automation_secret
         assert transport.users["cmkadmin"]["disabled"]
-        retirement = next(i for i, call in enumerate(transport.calls) if call[1] == "PUT")
-        for account in ("dwlabcmkadm", "dwlab-automation"):
-            assert (account, "GET", f"/objects/user_config/{account}") in transport.calls[:retirement]
+        retirement = next(i for i, call in enumerate(transport.calls)
+                          if call[1:] == ("PUT", "/objects/user_config/cmkadmin"))
+        assert ("dwlabcmkadm", "GET", "/objects/user_config/dwlabcmkadm") in transport.calls[:retirement]
+        assert ("dwlab-automation", "GET", "/version") in transport.calls[:retirement]
         for secret in (original.bootstrap_password, original.emergency_password, original.automation_secret):
             assert secret not in caplog.text
             assert secret not in repr(result)
@@ -130,7 +143,7 @@ class TestAccountCompletion:
         assert after.phase != "accounts-ready"
         if failure in {"create", "verify", "etag"}:
             assert not transport.users["cmkadmin"]["disabled"]
-            assert not any(call[1] == "PUT" for call in transport.calls)
+            assert not any(call[1:] == ("PUT", "/objects/user_config/cmkadmin") for call in transport.calls)
 
     def test_preexisting_user_is_not_overwritten(self, tmp_path):
         store, _, transport, completion = self.fixture(tmp_path)
@@ -150,7 +163,7 @@ class TestAccountCompletion:
         transport.fail_account = None
         completion.complete("central")
         assert transport.users["dwlabcmkadm"]["secret"] == state.emergency_password
-        assert sum(call[1] == "POST" for call in transport.calls) == 3
+        assert sum(call[1] == "POST" and "/user_config/" in call[2] for call in transport.calls) == 3
 
     def test_retry_after_bootstrap_was_disabled(self, tmp_path):
         store, _, transport, completion = self.fixture(tmp_path)
@@ -161,7 +174,7 @@ class TestAccountCompletion:
             assert transaction.load().phase == "retiring-bootstrap"
         transport.fail_after_retirement = False
         completion.complete("central")
-        assert sum(call[1] == "PUT" for call in transport.calls) == 1
+        assert sum(call[1:] == ("PUT", "/objects/user_config/cmkadmin") for call in transport.calls) == 1
 
     def test_completed_retry_is_read_only(self, tmp_path):
         store, _, transport, completion = self.fixture(tmp_path)
@@ -202,7 +215,7 @@ class TestAccountCompletion:
         transport.users["dwlabcmkadm"][field] = value
         with pytest.raises(BootstrapError):
             completion.complete("central")
-        assert not any(call[1] == "PUT" for call in transport.calls)
+        assert not any(call[1:] == ("PUT", "/objects/user_config/cmkadmin") for call in transport.calls)
         assert not transport.users["cmkadmin"]["disabled"]
 
 

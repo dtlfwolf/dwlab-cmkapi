@@ -13,12 +13,11 @@ import shlex
 import subprocess
 from typing import Callable, Protocol
 
-from dwlabbasicpy.dwlabLogging import UtcLogFormatter
-
 from .credential_bootstrap import (
     BootstrapAuthorization, BootstrapError, OmdBootstrapBackend,
     RootBootstrapAuthorization, SiteCredentialState, SiteCredentialStore,
 )
+from .automation_role import AutomationRoleProvisioner
 
 
 class AccountTransport(Protocol):
@@ -61,14 +60,15 @@ class NativeAccountTransport:
             shlex.join(["python3", "-c", program]),
         ]
         payload = {"site": state.site, "username": username, "password": password,
-                   "method": method, "path": path, "body": body, "etag": etag}
+                   "method": method, "path": path, "body": body, "etag": etag,
+                   "legacy_migration": state.legacy_migration}
         try:
             result = self._runner(
                 arguments, input=json.dumps(payload).encode(), stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, check=False, timeout=120,
                 env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
             )
-            if result.returncode or len(result.stdout) > 16384:
+            if result.returncode or len(result.stdout) > 131072:
                 raise ValueError
             data = json.loads(result.stdout)
             if not isinstance(data, dict) or type(data.get("status")) is not int:
@@ -96,19 +96,29 @@ class SiteAccountProvisioner:
         for account in (self.ADMIN, self.AUTOMATION):
             if self._get(state, account, "cmkadmin", state.bootstrap_password)["status"] != 404:
                 raise BootstrapError("Replacement account preflight failed; existing accounts are not overwritten.")
+        AutomationRoleProvisioner(self._transport).assert_absent(state)
 
     def _verify_one(self, state: SiteCredentialState, account: str, secret: str,
                     auth_type: str) -> None:
-        response = self._get(state, account, account, secret)
+        actor = self.ADMIN if account == self.AUTOMATION else account
+        actor_secret = state.emergency_password if account == self.AUTOMATION else secret
+        response = self._get(state, account, actor, actor_secret)
         user = response.get("user", {})
+        roles = [AutomationRoleProvisioner.NAME] if account == self.AUTOMATION else ["admin"]
         if (response["status"] != 200 or not isinstance(user, dict) or user.get("id") != account
-                or user.get("roles") != ["admin"] or user.get("disabled") is not False
+                or user.get("roles") != roles or user.get("disabled") is not False
                 or user.get("auth_type") != auth_type
                 or (auth_type == "automation" and user.get("store_secret") is not False)):
             raise BootstrapError(f"Independent administrative authentication failed for {account}.")
+        if account == self.AUTOMATION:
+            proof = self._transport.request(state, account, secret, "GET", "/version")
+            denied = self._get(state, self.ADMIN, account, secret)
+            if proof["status"] != 200 or denied["status"] not in {401, 403}:
+                raise BootstrapError("Automation authentication or privilege separation failed.")
 
     def provision(self, state: SiteCredentialState) -> None:
         """Create missing accounts; retry only accounts with our verified secrets."""
+        AutomationRoleProvisioner(self._transport).provision(state)
         for account, secret, auth_type in (
             (self.ADMIN, state.emergency_password, "password"),
             (self.AUTOMATION, state.automation_secret, "automation"),
@@ -124,7 +134,9 @@ class SiteAccountProvisioner:
                     state, "cmkadmin", state.bootstrap_password, "POST",
                     "/domain-types/user_config/collections/all",
                     body={"username": account, "fullname": f"DW-Lab local {account}",
-                          "roles": ["admin"], "disable_login": False, "auth_option": auth},
+                          "roles": ([AutomationRoleProvisioner.NAME] if account == self.AUTOMATION
+                                    else ["admin"]),
+                          "disable_login": False, "auth_option": auth},
                 )
                 if response["status"] != 200:
                     raise BootstrapError(f"Account creation failed for {account}; no credential overwrite attempted.")
@@ -135,21 +147,22 @@ class SiteAccountProvisioner:
     def verify_replacements(self, state: SiteCredentialState) -> None:
         """Authenticate each replacement separately, never through bootstrap cookies."""
         self._verify_one(state, self.ADMIN, state.emergency_password, "password")
+        AutomationRoleProvisioner(self._transport).verify(state, self.ADMIN, state.emergency_password)
         self._verify_one(state, self.AUTOMATION, state.automation_secret, "automation")
 
     def retire_bootstrap(self, state: SiteCredentialState) -> None:
         """Disable/remove bootstrap authentication only after replacement proofs."""
         self.verify_replacements(state)
-        current = self._get(state, "cmkadmin", self.AUTOMATION, state.automation_secret)
+        current = self._get(state, "cmkadmin", self.ADMIN, state.emergency_password)
         user = current.get("user")
         if current["status"] != 200 or not isinstance(user, dict):
-            raise BootstrapError("Cannot inspect bootstrap account through the automation identity.")
+            raise BootstrapError("Cannot inspect bootstrap account through the emergency administrator.")
         if user.get("disabled") is not True:
             etag = current.get("etag")
             if not isinstance(etag, str) or not etag or len(etag) > 1024 or any(c in etag for c in "\r\n"):
                 raise BootstrapError("Missing or invalid bootstrap account ETag.")
             response = self._transport.request(
-                state, self.AUTOMATION, state.automation_secret, "PUT",
+                state, self.ADMIN, state.emergency_password, "PUT",
                 "/objects/user_config/cmkadmin", etag=etag,
                 body={"disable_login": True, "auth_option": {"auth_type": "remove"}},
             )
@@ -164,7 +177,7 @@ class SiteAccountProvisioner:
     def verify_retired(self, state: SiteCredentialState) -> None:
         """Verify both permanent accounts and the disabled bootstrap account."""
         self.verify_replacements(state)
-        current = self._get(state, "cmkadmin", self.AUTOMATION, state.automation_secret)
+        current = self._get(state, "cmkadmin", self.ADMIN, state.emergency_password)
         user = current.get("user")
         if (current["status"] != 200 or not isinstance(user, dict)
                 or user.get("disabled") is not True):
@@ -231,6 +244,8 @@ class AccountBootstrapCli:
 
     def run(self, argv: list[str] | None = None) -> int:
         """Complete accounts on an explicitly prepared stopped site."""
+        from dwlabbasicpy.dwlabLogging import UtcLogFormatter
+
         parser = argparse.ArgumentParser(description=__doc__)
         parser.add_argument("command", choices=["complete-accounts"])
         parser.add_argument("--site", required=True)

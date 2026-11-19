@@ -28,11 +28,18 @@ class NativeAccountRunner:
             "/objects/user_config/cmkadmin",
             "/objects/user_config/dwlabcmkadm",
             "/objects/user_config/dwlab-automation",
+            "/domain-types/user_role/collections/all",
+            "/objects/user_role/dwlab_automation",
+            "/version",
         } or request["method"] not in {"GET", "POST", "PUT"}:
             raise ValueError("Unsupported account operation")
         if request["username"] not in {"cmkadmin", "dwlabcmkadm", "dwlab-automation"}:
             raise ValueError("Unsupported account identity")
-        if not re.fullmatch(r"[0-9a-f]{64}", request["password"]):
+        password = request["password"]
+        legacy = request.get("legacy_migration") is True and request["username"] == "cmkadmin"
+        if (not isinstance(password, str) or not 1 <= len(password) <= 1024
+                or any(c in password for c in "\r\n\x00")
+                or (not legacy and not re.fullmatch(r"[0-9a-f]{64}", password))):
             raise ValueError("Invalid secret format")
         from cmk.ccc import version
         from cmk.ccc.site import omd_site
@@ -54,6 +61,18 @@ class NativeAccountRunner:
             headers["If-Match"] = request["etag"]
         # No REMOTE_USER override, testing-mode bypass or retained login cookie.
         with app.test_client(use_cookies=False) as client:
+            if "/user_role/" in path:
+                # The vendor registers dynamic permissions while listing roles,
+                # but validates PUT fields before entering its update endpoint.
+                # Initialize through an authenticated read, not a bypass or a
+                # hand-maintained subset that would leave inherited rights on.
+                preflight = client.open(
+                    f"/{site}/check_mk/api/1.0/domain-types/user_role/collections/all",
+                    method="GET", base_url="https://localhost", headers=headers,
+                    follow_redirects=False,
+                )
+                if preflight.status_code != 200:
+                    return {"status": preflight.status_code, "etag": None}
             response = client.open(
                 f"/{site}/check_mk/api/1.0{path}", method=request["method"],
                 base_url="https://localhost", headers=headers,
@@ -70,13 +89,22 @@ class NativeAccountRunner:
                 "auth_type": auth.get("auth_type"),
                 "store_secret": auth.get("store_automation_secret", False),
             }
+            if "/user_role/" in path:
+                from cmk.gui import permissions
+
+                result["role"] = {
+                    "id": data.get("id"), "basedon": extensions.get("basedon"),
+                    "builtin": extensions.get("builtin"),
+                    "permissions": extensions.get("permissions"),
+                    "available_permissions": sorted(permissions.permission_registry.keys()),
+                }
         return result
 
     def run(self) -> int:
         """Consume secrets from stdin; suppress framework output and errors."""
         try:
-            raw = sys.stdin.buffer.read(16385)
-            if len(raw) > 16384:
+            raw = sys.stdin.buffer.read(131073)
+            if len(raw) > 131072:
                 raise ValueError("Request too large")
             request = json.loads(raw)
             with open(os.devnull, "w") as sink, redirect_stdout(sink), redirect_stderr(sink):

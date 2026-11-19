@@ -38,6 +38,7 @@ rebuild-wheel:
 
 clean-wheel:
 	rm -rf "$(WHEEL_OUTPUT_DIR)"
+	rm -rf "$(ROOT)/build"
 
 clean:
 	rm -rf .pybuild .pytest_cache build "$(BUILD_ARTIFACTS)" *.egg-info src/*.egg-info tests/__pycache__ */__pycache__

@@ -16,8 +16,6 @@ import stat
 import subprocess
 from typing import Callable, Iterator, Protocol
 
-from dwlabbasicpy.dwlabLogging import UtcLogFormatter
-
 
 class BootstrapError(RuntimeError):
     """Credential preparation failed without exposing sensitive diagnostics."""
@@ -51,6 +49,7 @@ class SiteCredentialState:
     bootstrap_password: str
     emergency_password: str
     automation_secret: str
+    legacy_migration: bool = False
 
     @classmethod
     def generate(cls, site: str, uid: int, gid: int) -> SiteCredentialState:
@@ -103,12 +102,17 @@ class CredentialTransaction:
         values = (state.emergency_password, state.automation_secret)
         phases = {"prepared", "creating", "created", "awaiting-accounts",
                   "provisioning-accounts", "retiring-bootstrap", "accounts-ready"}
-        if state.phase != "accounts-ready":
+        if state.phase != "accounts-ready" and not state.legacy_migration:
             values += (state.bootstrap_password,)
         if (state.site != self._site
                 or type(state.uid) is not int or state.uid < 1
                 or type(state.gid) is not int or state.gid < 1
                 or state.phase not in phases
+                or type(state.legacy_migration) is not bool
+                or (state.legacy_migration and state.phase != "accounts-ready"
+                    and (not isinstance(state.bootstrap_password, str)
+                         or not 1 <= len(state.bootstrap_password) <= 1024
+                         or any(c in state.bootstrap_password for c in "\r\n\x00")))
                 or (state.phase == "accounts-ready" and state.bootstrap_password != "")
                 or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
                        for value in values)
@@ -207,10 +211,12 @@ class OmdBootstrapBackend:
 
     def __init__(self, sites_root: Path = Path("/omd/sites"),
                  runner: Callable = subprocess.run,
-                 authorization: BootstrapAuthorization | None = None) -> None:
+                 authorization: BootstrapAuthorization | None = None,
+                 no_tmpfs: bool = False) -> None:
         self._sites_root = Path(sites_root)
         self._runner = runner
         self._authorization = authorization or RootBootstrapAuthorization()
+        self._no_tmpfs = no_tmpfs
 
     def _run(self, arguments: list[str], *, input_bytes: bytes | None = None,
              capture: bool = False) -> subprocess.CompletedProcess:
@@ -238,10 +244,12 @@ class OmdBootstrapBackend:
 
     def create(self, site: str, uid: int, gid: int) -> None:
         """Create a stopped site and discard OMD's initial-password output."""
-        result = self._run([
+        arguments = [
             "/usr/bin/omd", "create", "--no-autostart",
-            "-u", str(uid), "-g", str(gid), site,
-        ])
+        ]
+        if self._no_tmpfs:
+            arguments.append("--no-tmpfs")
+        result = self._run(arguments + ["-u", str(uid), "-g", str(gid), site])
         if result.returncode:
             raise BootstrapError(f"OMD site creation failed (exit {result.returncode}); sensitive output suppressed.")
 
@@ -348,6 +356,8 @@ class BootstrapCli:
 
     def run(self, argv: list[str] | None = None) -> int:
         """Print metadata only; never print credentials or native command output."""
+        from dwlabbasicpy.dwlabLogging import UtcLogFormatter
+
         parser = argparse.ArgumentParser(description=__doc__)
         parser.add_argument("command", choices=["prepare-new-site"])
         parser.add_argument("--site", required=True)
