@@ -14,6 +14,7 @@ class PortableBootstrapBundle:
     MODULES = (
         "credential_bootstrap.py", "account_bootstrap.py", "automation_role.py",
         "native_account_runner.py", "container_bootstrap.py",
+        "bootstrap_changes.py", "account_activation.py",
     )
 
     def write(self, destination: Path) -> None:

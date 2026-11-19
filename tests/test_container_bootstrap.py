@@ -30,7 +30,7 @@ def test_completed_site_is_verified_before_activation(tmp_path, monkeypatch):
     store = SiteCredentialStore(tmp_path / "private")
     with store.transaction("client") as transaction:
         transaction.save(replace(SiteCredentialState.generate("client", 1000, 1000),
-                                 phase="accounts-ready", bootstrap_password=""))
+                                 phase="accounts-ready", bootstrap_password="", activation_complete=True))
     backend = Backend()
 
     class Completion:
@@ -67,7 +67,7 @@ def test_verification_failure_prevents_service_configuration(tmp_path, monkeypat
     store = SiteCredentialStore(tmp_path / "private")
     with store.transaction("client") as transaction:
         transaction.save(replace(SiteCredentialState.generate("client", 1000, 1000),
-                                 phase="accounts-ready", bootstrap_password=""))
+                                 phase="accounts-ready", bootstrap_password="", activation_complete=True))
     backend = Backend()
 
     class Completion:
@@ -91,7 +91,7 @@ def test_damaged_existing_volume_is_not_recreated(tmp_path, monkeypatch):
     store = SiteCredentialStore(tmp_path / "private")
     with store.transaction("client") as transaction:
         transaction.save(replace(SiteCredentialState.generate("client", 1000, 1000),
-                                 phase="accounts-ready", bootstrap_password=""))
+                                 phase="accounts-ready", bootstrap_password="", activation_complete=True))
     backend = Backend()
     with pytest.raises(BootstrapError, match="damaged"):
         module.ContainerSiteBootstrap(store, backend, sites_root=tmp_path / "sites").configure("client")

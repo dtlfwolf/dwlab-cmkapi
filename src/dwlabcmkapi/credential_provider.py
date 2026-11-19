@@ -53,7 +53,7 @@ class SiteAutomationCredentialProvider:
             raise BootstrapError("Credential reference must identify this site's private state.")
         with SiteCredentialStore(path.parent.parent).transaction(site) as transaction:
             state = transaction.load()
-            if state is None or state.phase != "accounts-ready":
+            if state is None or state.phase != "accounts-ready" or not state.activation_complete:
                 return None
             return AutomationCredential("dwlab-automation", state.automation_secret)
 

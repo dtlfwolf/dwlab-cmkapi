@@ -13,7 +13,7 @@ import stat
 import yaml
 from dwlabbasicpy.dwlabLogging import UtcLogFormatter
 
-from .account_bootstrap import NativeAccountTransport, SiteAccountCompletion
+from .account_bootstrap import AccountCompletionResult, NativeAccountTransport, SiteAccountCompletion
 from .credential_bootstrap import (
     BootstrapAuthorization, BootstrapError, NewSiteCredentialPreparation, OmdBootstrapBackend,
     RootBootstrapAuthorization, SiteCredentialStore,
@@ -108,7 +108,7 @@ class SiteInstallation:
         self._logger = logger or logging.getLogger(__name__)
 
     def configure(self, settings_file: Path, *, migrate: bool = False,
-                  approved: bool = False):
+                  approved: bool = False) -> AccountCompletionResult:
         """Prepare new sites, or migrate existing sites only with explicit approval."""
         RootBootstrapAuthorization().require_root()
         settings = PrivateInstallationSettings(settings_file)

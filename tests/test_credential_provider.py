@@ -34,7 +34,7 @@ class Settings:
 def ready(tmp_path):
     root = tmp_path / "private"
     state = replace(SiteCredentialState.generate("central", 6000, 6000),
-                    phase="accounts-ready", bootstrap_password="")
+                    phase="accounts-ready", bootstrap_password="", activation_complete=True)
     with SiteCredentialStore(root).transaction("central") as transaction:
         transaction.save(state)
     return root / "central" / "credentials.json", state

@@ -2,6 +2,37 @@
 
 `dwlabcmkapi` provides a simple and extensible Python interface to interact with Checkmk servers, manage monitoring configurations, schedule backups, and integrate Checkmk operations into your custom workflows.
 
+## Scoped Bootstrap Activation (0.26.0)
+
+Account provisioning supports native Checkmk 2.4 and 2.5 registration APIs.
+Before starting, clear existing pending configuration changes and disable
+remote configuration/user replication. Provisioning refuses unrelated pending
+work; it records only the acknowledged account changes in a root-private
+ledger. An ambiguous mutation interrupted before its checkpoint requires manual
+review, not automatic adoption of pending work.
+
+After account completion, start the site and finalize its recorded changes:
+
+```bash
+sudo omd start YOUR_SITE
+sudo /opt/dwlab/venv/bin/python -m dwlabcmkapi.account_activation \
+  complete --site YOUR_SITE
+```
+
+The finalizer pins the pending-change ETag and the local site. Emergency
+authorization may activate only the exact recorded bootstrap batch, never
+unrelated administrator changes. A persisted activation UUID permits polling
+retries without submitting another batch. Successful per-site activation is
+required before ordinary credential consumers can use the new reference.
+Completed retries do not activate later customer work. Normal catalog operations
+retain `force_foreign_changes=False`.
+
+Deployment must stop the site if finalization fails. The portable container
+bootstrap starts and stops the site for this finalization only after account
+proofs, before announcing its VPN. Existing prepared 0.25 states with unrecorded
+pending changes need manual review. Do not downgrade the core reader after
+writing the extended private state; restore matching code and state together.
+
 ## Container Restart Safety (0.25.1)
 
 The existing-volume entrypoint receives only its validated, non-secret site ID
@@ -23,7 +54,7 @@ cmkCredentialsFile: /var/lib/dwlab/dwlabcmkapi/credentials/central/credentials.j
 
 The reference contains no password. Resolving it requires OS root, mode 0700
 credential directories, a singly linked mode 0600 file, trusted directory
-ancestry and `accounts-ready` state. Only the automation identity is returned;
+ancestry, `accounts-ready` state and verified bootstrap activation. Only the automation identity is returned;
 the emergency password is not used by ordinary API consumers. Missing, unsafe,
 incomplete or mismatched references fail closed, even if old password settings
 are also present. Existing HTTPS identity and loopback routing policies remain

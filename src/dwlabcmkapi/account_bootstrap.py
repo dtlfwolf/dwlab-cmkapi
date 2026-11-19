@@ -18,12 +18,14 @@ from .credential_bootstrap import (
     RootBootstrapAuthorization, SiteCredentialState, SiteCredentialStore,
 )
 from .automation_role import AutomationRoleProvisioner
+from .bootstrap_changes import BootstrapChangeLedger
 
 
 class AccountTransport(Protocol):
     """Authenticated site-local requests; implementations must not open listeners."""
 
     def verify_site(self, state: SiteCredentialState) -> None: ...
+    def verify_identity(self, state: SiteCredentialState) -> None: ...
 
     def request(self, state: SiteCredentialState, username: str, password: str,
                 method: str, path: str, *, body: dict | None = None,
@@ -41,10 +43,16 @@ class NativeAccountTransport:
 
     def verify_site(self, state: SiteCredentialState) -> None:
         """Require a supported stopped site with the recorded OS identity."""
+        self.verify_identity(state)
+        if not self._omd.is_stopped(state.site):
+            raise BootstrapError("Account provisioning requires the recorded site to exist and be stopped.")
+
+    def verify_identity(self, state: SiteCredentialState) -> None:
+        """Check a recorded site's OS identity, including during online activation."""
         self._authorization.require_root()
         self._omd.verify_support()
-        if not self._omd.exists(state.site) or not self._omd.is_stopped(state.site):
-            raise BootstrapError("Account provisioning requires the recorded site to exist and be stopped.")
+        if not self._omd.exists(state.site):
+            raise BootstrapError("The recorded site is missing.")
         account = pwd.getpwnam(state.site)
         if (account.pw_uid, account.pw_gid) != (state.uid, state.gid):
             raise BootstrapError("Site OS identity differs from private preparation state.")
@@ -97,6 +105,15 @@ class SiteAccountProvisioner:
             if self._get(state, account, "cmkadmin", state.bootstrap_password)["status"] != 404:
                 raise BootstrapError("Replacement account preflight failed; existing accounts are not overwritten.")
         AutomationRoleProvisioner(self._transport).assert_absent(state)
+        BootstrapChangeLedger(self._transport).assert_current(state, "cmkadmin", state.bootstrap_password)
+        connections = self._transport.request(
+            state, "cmkadmin", state.bootstrap_password, "GET",
+            "/domain-types/site_connection/collections/all",
+        )
+        if (connections["status"] != 200 or not isinstance(connections.get("site_connections"), list)
+                or any(item.get("id") != state.site and item.get("replication_enabled") is not False
+                       for item in connections["site_connections"])):
+            raise BootstrapError("Independent local accounts require configuration/user replication to be disabled.")
 
     def _verify_one(self, state: SiteCredentialState, account: str, secret: str,
                     auth_type: str) -> None:
@@ -116,9 +133,12 @@ class SiteAccountProvisioner:
             if proof["status"] != 200 or denied["status"] not in {401, 403}:
                 raise BootstrapError("Automation authentication or privilege separation failed.")
 
-    def provision(self, state: SiteCredentialState) -> None:
+    def provision(self, state: SiteCredentialState, checkpoint: Callable) -> SiteCredentialState:
         """Create missing accounts; retry only accounts with our verified secrets."""
+        ledger = BootstrapChangeLedger(self._transport)
+        ledger.assert_current(state, "cmkadmin", state.bootstrap_password)
         AutomationRoleProvisioner(self._transport).provision(state)
+        ledger.assert_current(state, "cmkadmin", state.bootstrap_password)
         for account, secret, auth_type in (
             (self.ADMIN, state.emergency_password, "password"),
             (self.AUTOMATION, state.automation_secret, "automation"),
@@ -140,9 +160,12 @@ class SiteAccountProvisioner:
                 )
                 if response["status"] != 200:
                     raise BootstrapError(f"Account creation failed for {account}; no credential overwrite attempted.")
+                state = ledger.record_one(state, "cmkadmin", state.bootstrap_password)
+                checkpoint(state)
             elif current["status"] != 200:
                 raise BootstrapError(f"Account inspection failed for {account}.")
             self._verify_one(state, account, secret, auth_type)
+        return state
 
     def verify_replacements(self, state: SiteCredentialState) -> None:
         """Authenticate each replacement separately, never through bootstrap cookies."""
@@ -150,9 +173,11 @@ class SiteAccountProvisioner:
         AutomationRoleProvisioner(self._transport).verify(state, self.ADMIN, state.emergency_password)
         self._verify_one(state, self.AUTOMATION, state.automation_secret, "automation")
 
-    def retire_bootstrap(self, state: SiteCredentialState) -> None:
+    def retire_bootstrap(self, state: SiteCredentialState, checkpoint: Callable) -> SiteCredentialState:
         """Disable/remove bootstrap authentication only after replacement proofs."""
         self.verify_replacements(state)
+        ledger = BootstrapChangeLedger(self._transport)
+        ledger.assert_current(state, self.ADMIN, state.emergency_password)
         current = self._get(state, "cmkadmin", self.ADMIN, state.emergency_password)
         user = current.get("user")
         if current["status"] != 200 or not isinstance(user, dict):
@@ -168,11 +193,14 @@ class SiteAccountProvisioner:
             )
             if response["status"] != 200:
                 raise BootstrapError("Bootstrap retirement failed; private recovery state retained.")
+            state = ledger.record_one(state, self.ADMIN, state.emergency_password)
+            checkpoint(state)
         self.verify_retired(state)
         if state.bootstrap_password:
             denied = self._get(state, "cmkadmin", "cmkadmin", state.bootstrap_password)
             if denied["status"] not in {401, 403}:
                 raise BootstrapError("Old bootstrap credential was not conclusively rejected.")
+        return state
 
     def verify_retired(self, state: SiteCredentialState) -> None:
         """Verify both permanent accounts and the disabled bootstrap account."""
@@ -223,12 +251,12 @@ class SiteAccountCompletion:
                     state = replace(state, phase="provisioning-accounts")
                     transaction.save(state)
                 if state.phase == "provisioning-accounts":
-                    accounts.provision(state)
+                    state = accounts.provision(state, transaction.save)
                     state = replace(state, phase="retiring-bootstrap")
                     transaction.save(state)
                     self._logger.info("STEP PASS: operation=cmk-account-complete phase=replacements-verified site=%s", site)
                 if state.phase == "retiring-bootstrap":
-                    accounts.retire_bootstrap(state)
+                    state = accounts.retire_bootstrap(state, transaction.save)
                     state = replace(state, phase="accounts-ready", bootstrap_password="")
                     transaction.save(state)
                 accounts.verify_retired(state)

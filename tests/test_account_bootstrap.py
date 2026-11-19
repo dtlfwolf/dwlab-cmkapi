@@ -32,12 +32,17 @@ class FakeTransport:
         self.accept_old_password = False
         self.etag = '"verified-etag"'
         self.role = None
+        self.changes = []
+        self.site_connections = []
 
     def user(self, secret, auth_type):
         return {"secret": secret, "roles": ["admin"], "disabled": False,
                 "auth_type": auth_type, "store_secret": False}
 
     def verify_site(self, state):
+        pass
+
+    def verify_identity(self, state):
         pass
 
     def request(self, state, username, password, method, path, *, body=None, etag=None):
@@ -50,6 +55,10 @@ class FakeTransport:
             return {"status": 401}
         if username == "dwlab-automation":
             return {"status": 200 if path == "/version" else 403}
+        if path == "/domain-types/activation_run/collections/pending_changes":
+            return {"status": 200, "pending_changes": list(self.changes), "etag": self.etag}
+        if path == "/domain-types/site_connection/collections/all":
+            return {"status": 200, "site_connections": self.site_connections}
         if "/user_role/" in path:
             if method == "POST":
                 self.role = {"id": AutomationRoleProvisioner.NAME, "builtin": False,
@@ -74,6 +83,7 @@ class FakeTransport:
             auth = body["auth_option"]
             self.users[account] = self.user(auth.get("password", auth.get("secret")), auth["auth_type"])
             self.users[account]["roles"] = body["roles"]
+            self.changes.append({"id": str(len(self.changes) + 1), "action_name": "edit-users", "user_id": username})
             return {"status": 200}
         if method == "PUT":
             assert username == "dwlabcmkadm"
@@ -82,6 +92,7 @@ class FakeTransport:
             if self.fail_retirement:
                 return {"status": 500}
             self.users[account].update(disabled=True, secret=None)
+            self.changes.append({"id": str(len(self.changes) + 1), "action_name": "edit-users", "user_id": username})
             if self.fail_after_retirement:
                 raise BootstrapError("Interrupted after disabling bootstrap")
             return {"status": 200}
@@ -165,7 +176,7 @@ class TestAccountCompletion:
         assert transport.users["dwlabcmkadm"]["secret"] == state.emergency_password
         assert sum(call[1] == "POST" and "/user_config/" in call[2] for call in transport.calls) == 3
 
-    def test_retry_after_bootstrap_was_disabled(self, tmp_path):
+    def test_uncertain_retirement_journal_requires_review_not_foreign_activation(self, tmp_path):
         store, _, transport, completion = self.fixture(tmp_path)
         transport.fail_after_retirement = True
         with pytest.raises(BootstrapError):
@@ -173,8 +184,23 @@ class TestAccountCompletion:
         with store.transaction("central") as transaction:
             assert transaction.load().phase == "retiring-bootstrap"
         transport.fail_after_retirement = False
-        completion.complete("central")
+        with pytest.raises(BootstrapError):
+            completion.complete("central")
         assert sum(call[1:] == ("PUT", "/objects/user_config/cmkadmin") for call in transport.calls) == 1
+
+    def test_preexisting_customer_changes_block_provisioning(self, tmp_path):
+        _, _, transport, completion = self.fixture(tmp_path)
+        transport.changes.append({"id": "customer", "action_name": "edit-host", "user_id": "customer"})
+        with pytest.raises(BootstrapError):
+            completion.complete("central")
+        assert not any(method in {"POST", "PUT"} for _, method, _ in transport.calls)
+
+    def test_remote_user_configuration_replication_blocks_independent_accounts(self, tmp_path):
+        _, _, transport, completion = self.fixture(tmp_path)
+        transport.site_connections = [{"id": "remote", "replication_enabled": True}]
+        with pytest.raises(BootstrapError):
+            completion.complete("central")
+        assert not any(method in {"POST", "PUT"} for _, method, _ in transport.calls)
 
     def test_completed_retry_is_read_only(self, tmp_path):
         store, _, transport, completion = self.fixture(tmp_path)

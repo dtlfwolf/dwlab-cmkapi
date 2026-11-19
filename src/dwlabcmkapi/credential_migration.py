@@ -8,11 +8,12 @@ import os
 from pathlib import Path
 import pwd
 import tarfile
+from typing import Callable
 
-from .account_bootstrap import NativeAccountTransport, SiteAccountCompletion
+from .account_bootstrap import AccountCompletionResult, AccountTransport, NativeAccountTransport, SiteAccountCompletion
 from .credential_bootstrap import (
     BootstrapAuthorization, BootstrapError, OmdBootstrapBackend,
-    RootBootstrapAuthorization, SiteCredentialState, SiteCredentialStore,
+    RootBootstrapAuthorization, SiteBootstrapBackend, SiteCredentialState, SiteCredentialStore,
 )
 
 
@@ -44,10 +45,11 @@ class SiteMigrationBackup:
 class ExistingSiteCredentialMigration:
     """Never reset the old password to adopt an existing site."""
 
-    def __init__(self, store: SiteCredentialStore, backend=None, transport=None,
+    def __init__(self, store: SiteCredentialStore, backend: SiteBootstrapBackend | None = None,
+                 transport: AccountTransport | None = None,
                  backup: SiteMigrationBackup | None = None,
                  authorization: BootstrapAuthorization | None = None,
-                 identity_lookup=pwd.getpwnam,
+                 identity_lookup: Callable[[str], pwd.struct_passwd] = pwd.getpwnam,
                  logger: logging.Logger | None = None) -> None:
         self._authorization = authorization or RootBootstrapAuthorization()
         self._store = store
@@ -57,7 +59,7 @@ class ExistingSiteCredentialMigration:
         self._identity_lookup = identity_lookup
         self._logger = logger or logging.getLogger(__name__)
 
-    def migrate(self, site: str, old_password: str, *, approved: bool = False):
+    def migrate(self, site: str, old_password: str, *, approved: bool = False) -> AccountCompletionResult:
         """Back up and verify replacement accounts before retiring old access."""
         self._authorization.require_root()
         if approved is not True:

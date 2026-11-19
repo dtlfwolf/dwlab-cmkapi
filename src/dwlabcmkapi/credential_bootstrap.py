@@ -50,6 +50,9 @@ class SiteCredentialState:
     emergency_password: str
     automation_secret: str
     legacy_migration: bool = False
+    bootstrap_changes: tuple[str, ...] = ()
+    activation_id: str = ""
+    activation_complete: bool = False
 
     @classmethod
     def generate(cls, site: str, uid: int, gid: int) -> SiteCredentialState:
@@ -90,6 +93,10 @@ class CredentialTransaction:
                     raise ValueError
                 if data.get("phase") == "accounts-ready":
                     data.setdefault("bootstrap_password", "")
+                if "bootstrap_changes" in data:
+                    if not isinstance(data["bootstrap_changes"], list):
+                        raise ValueError
+                    data["bootstrap_changes"] = tuple(data["bootstrap_changes"])
                 state = SiteCredentialState(**data)
                 self._validate(state)
                 return state
@@ -109,6 +116,16 @@ class CredentialTransaction:
                 or type(state.gid) is not int or state.gid < 1
                 or state.phase not in phases
                 or type(state.legacy_migration) is not bool
+                or type(state.activation_complete) is not bool
+                or (state.activation_complete and state.phase != "accounts-ready")
+                or not isinstance(state.activation_id, str)
+                or (state.activation_id and (state.phase != "accounts-ready"
+                    or not re.fullmatch(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", state.activation_id)))
+                or not isinstance(state.bootstrap_changes, tuple)
+                or len(state.bootstrap_changes) > 3
+                or len(set(state.bootstrap_changes)) != len(state.bootstrap_changes)
+                or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+                       for value in state.bootstrap_changes)
                 or (state.legacy_migration and state.phase != "accounts-ready"
                     and (not isinstance(state.bootstrap_password, str)
                          or not 1 <= len(state.bootstrap_password) <= 1024

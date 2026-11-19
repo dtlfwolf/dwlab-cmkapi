@@ -13,6 +13,7 @@ from .credential_bootstrap import (
     RootBootstrapAuthorization, SiteCredentialStore,
 )
 from .account_bootstrap import NativeAccountTransport, SiteAccountCompletion
+from .account_activation import BootstrapChangeActivation
 
 
 class ContainerSiteBootstrap:
@@ -61,6 +62,16 @@ class ContainerSiteBootstrap:
             f"RedirectMatch ^/$ /{site}/\n", encoding="ascii",
         )
         os.chown(apache, 1000, 1000)
+        with self._store.transaction(site) as transaction:
+            pending_activation = not transaction.load().activation_complete
+        if pending_activation:
+            if self._backend._run(["/usr/bin/omd", "start", site]).returncode:
+                raise BootstrapError("Cannot start the credential-verified site for bootstrap activation.")
+            try:
+                BootstrapChangeActivation(self._store, self._transport).complete(site)
+            finally:
+                if self._backend._run(["/usr/bin/omd", "stop", site]).returncode:
+                    raise BootstrapError("Cannot stop bootstrap activation runtime; startup blocked.")
         logging.getLogger(__name__).info("STEP PASS: operation=cmk-container-bootstrap site=%s credentials_verified=true", site)
 
 

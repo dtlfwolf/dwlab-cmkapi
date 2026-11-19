@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import tempfile
 import time
+from typing import Callable
 
 import requests
 
@@ -22,8 +23,11 @@ class LocalAgentDownloader:
 
     FORMATS = {"linux_deb": ".deb", "linux_rpm": ".rpm", "windows_msi": ".msi"}
 
-    def __init__(self, provider=None, session_factory=requests.Session,
-                 clock=time.monotonic, sleep=time.sleep, logger=None) -> None:
+    def __init__(self, provider: SiteAutomationCredentialProvider | None = None,
+                 session_factory: Callable[[], requests.Session] = requests.Session,
+                 clock: Callable[[], float] = time.monotonic,
+                 sleep: Callable[[float], None] = time.sleep,
+                 logger: logging.Logger | None = None) -> None:
         self._provider = provider or SiteAutomationCredentialProvider()
         self._session_factory = session_factory
         self._clock, self._sleep = clock, sleep
@@ -114,7 +118,7 @@ class LocalAgentDownloader:
 class AgentDownloadCli:
     """Root-only shell adapter; inputs identify state, not secret values."""
 
-    def run(self, argv=None) -> int:
+    def run(self, argv: list[str] | None = None) -> int:
         from dwlabbasicpy.dwlabLogging import UtcLogFormatter
 
         parser = argparse.ArgumentParser(description=__doc__)

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import stat
+from typing import Callable
 
 from .credential_bootstrap import (
     BootstrapError, RootBootstrapAuthorization, SiteCredentialState, SiteCredentialStore,
@@ -19,7 +20,7 @@ from .credential_bootstrap import (
 class LegacyContainerMigration:
     """Capture only approved local Docker state; never publish inspect output."""
 
-    def __init__(self, store: SiteCredentialStore, runner=subprocess.run) -> None:
+    def __init__(self, store: SiteCredentialStore, runner: Callable = subprocess.run) -> None:
         self._store, self._runner = store, runner
 
     def _run(self, arguments: list[str], *, output=subprocess.PIPE):
@@ -95,7 +96,7 @@ class LegacyContainerMigration:
 class ContainerMigrationCli:
     """Root-only explicit upgrade preparation and pre-removal guard."""
 
-    def run(self, argv=None) -> int:
+    def run(self, argv: list[str] | None = None) -> int:
         from dwlabbasicpy.dwlabLogging import UtcLogFormatter
 
         parser = argparse.ArgumentParser(description=__doc__)
