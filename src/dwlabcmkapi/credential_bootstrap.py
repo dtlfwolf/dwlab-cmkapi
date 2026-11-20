@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from enum import Enum
 import fcntl
 import json
 import logging
@@ -17,8 +18,33 @@ import subprocess
 from typing import Callable, Iterator, Protocol
 
 
+class BootstrapFailureCode(Enum):
+    """Reviewed, secret-free diagnostics suitable for files and operator logs."""
+
+    PENDING_CHANGES = ("PENDING_CHANGES", "Unactivated Checkmk changes require operator review; no automatic activation is permitted.")
+    ACCOUNT_CONFLICT = ("ACCOUNT_CONFLICT", "Reserved replacement accounts or role already exist and require review.")
+    REPLICATION_ENABLED = ("REPLICATION_ENABLED", "Remote configuration/user replication must be reviewed before independent accounts are provisioned.")
+    INVALID_STATE = ("INVALID_STATE", "Private credential or failure state is invalid or has unsafe permissions.")
+    NATIVE_OPERATION = ("NATIVE_OPERATION", "Authenticated native Checkmk inspection failed; review the existing site and credentials.")
+    GENERIC = ("BOOTSTRAP_FAILED", "Checkmk bootstrap failed; inspect the private recovery state before retrying.")
+
+    @property
+    def identifier(self) -> str:
+        return self.value[0]
+
+    @property
+    def message(self) -> str:
+        return self.value[1]
+
+
 class BootstrapError(RuntimeError):
     """Credential preparation failed without exposing sensitive diagnostics."""
+
+    def __init__(self, message: str, *, code: BootstrapFailureCode = BootstrapFailureCode.GENERIC) -> None:
+        if not isinstance(code, BootstrapFailureCode):
+            raise TypeError("Invalid bootstrap failure code")
+        self.code = code
+        super().__init__(message)
 
 
 class BootstrapAuthorization(Protocol):
@@ -71,7 +97,7 @@ class CredentialTransaction:
         info = os.fstat(descriptor)
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
                 or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
-            raise BootstrapError("Credential files must be private, singly linked and OS-owned.")
+            raise BootstrapError("Credential files must be private, singly linked and OS-owned.", code=BootstrapFailureCode.INVALID_STATE)
 
     def load(self) -> SiteCredentialState | None:
         """Load validated state without following links or repairing permissions."""
@@ -142,6 +168,54 @@ class CredentialTransaction:
         data = {"schema_version": 1, **vars(state)}
         if state.phase == "accounts-ready":
             del data["bootstrap_password"]
+        self._publish("credentials.json", data)
+
+    def load_failure(self) -> BootstrapFailureCode | None:
+        """Read only validated, site-bound, root-private failure codes."""
+        try:
+            descriptor = os.open(".bootstrap-failure.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                                 dir_fd=self._directory)
+        except FileNotFoundError:
+            return None
+        try:
+            self._check_file(descriptor)
+            raw = os.read(descriptor, 2049)
+            if len(raw) > 2048:
+                raise ValueError
+            data = json.loads(raw)
+            if (not isinstance(data, dict) or set(data) != {"schema_version", "site", "code"}
+                    or data["schema_version"] != 1 or data["site"] != self._site):
+                raise ValueError
+            for code in BootstrapFailureCode:
+                if code.identifier == data["code"]:
+                    return code
+            raise ValueError
+        except (ValueError, TypeError, KeyError):
+            raise BootstrapError("Invalid private bootstrap failure status.", code=BootstrapFailureCode.INVALID_STATE) from None
+        finally:
+            os.close(descriptor)
+
+    def raise_if_failed(self) -> None:
+        """Fail immediately rather than waiting for an intentionally blocked API."""
+        code = self.load_failure()
+        if code is not None:
+            raise BootstrapError(f"Bootstrap blocked [{code.identifier}]: {code.message}", code=code)
+
+    def record_failure(self, code: BootstrapFailureCode) -> None:
+        """Persist an allowlisted code, never exception text or customer data."""
+        if not isinstance(code, BootstrapFailureCode):
+            raise TypeError("Invalid bootstrap failure code")
+        self.load_failure()
+        self._publish(".bootstrap-failure.json", {"schema_version": 1, "site": self._site,
+                                                 "code": code.identifier})
+
+    def clear_failure(self) -> None:
+        """A new explicit container start revalidates instead of trusting old failure state."""
+        if self.load_failure() is not None:
+            os.unlink(".bootstrap-failure.json", dir_fd=self._directory)
+            os.fsync(self._directory)
+
+    def _publish(self, name: str, data: dict) -> None:
         temporary = f".credentials-{secrets.token_hex(16)}"
         descriptor = os.open(
             temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -152,7 +226,7 @@ class CredentialTransaction:
                 json.dump(data, output)
                 output.flush()
                 os.fsync(output.fileno())
-            os.replace(temporary, "credentials.json", src_dir_fd=self._directory,
+            os.replace(temporary, name, src_dir_fd=self._directory,
                        dst_dir_fd=self._directory)
             os.fsync(self._directory)
         finally:

@@ -9,7 +9,7 @@ from pathlib import Path
 import time
 
 from .credential_bootstrap import (
-    BootstrapError, NewSiteCredentialPreparation, OmdBootstrapBackend,
+    BootstrapError, BootstrapFailureCode, NewSiteCredentialPreparation, OmdBootstrapBackend,
     RootBootstrapAuthorization, SiteCredentialStore,
 )
 from .account_bootstrap import NativeAccountTransport, SiteAccountCompletion
@@ -33,6 +33,7 @@ class ContainerSiteBootstrap:
         RootBootstrapAuthorization().require_root()
         with self._store.transaction(site) as transaction:
             state = transaction.load()
+            transaction.clear_failure()
         exists = self._backend.exists(site)
         if exists:
             if state is None:
@@ -98,10 +99,14 @@ class ContainerBootstrapCli:
         logger.addHandler(handler)
         try:
             ContainerSiteBootstrap(SiteCredentialStore(args.credential_root)).configure(args.site)
-        except BootstrapError as error:
-            logger.error("STEP FAIL: operation=cmk-container-bootstrap reason=%s; startup blocked", error)
-            return 1
-        except (OSError, ValueError, KeyError) as error:
-            logger.error("STEP FAIL: operation=cmk-container-bootstrap failure=%s; startup blocked", type(error).__name__)
+        except Exception as error:
+            code = error.code if isinstance(error, BootstrapError) else BootstrapFailureCode.GENERIC
+            logger.error("STEP FAIL: operation=cmk-container-bootstrap code=%s reason=%s; startup blocked", code.identifier, code.message)
+            if os.geteuid() == 0:
+                try:
+                    with SiteCredentialStore(args.credential_root).transaction(args.site) as transaction:
+                        transaction.record_failure(code)
+                except (BootstrapError, OSError, ValueError):
+                    logger.error("Cannot persist private bootstrap failure status; inspect credential directory ownership/modes")
             return 1
         return 0

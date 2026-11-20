@@ -181,7 +181,12 @@ and firewall restrictions remain deployment-owned policies.
 
 Existing legacy containers require explicit `container_migration prepare --site
 SITE --credential-root ROOT --approve-existing-site` before replacement. Use an
-installed 0.25.0 runtime and an approved recovery snapshot. This stops the old
+installed 0.26.4 or later runtime and an approved recovery snapshot. Preparation
+first authenticates inside the running old container and performs read-only
+checks for pending changes, replacement-account conflicts and replication.
+Rejection leaves the old site running, without publishing migration state or a
+backup. It never activates or discards administrator changes. After those checks
+pass, preparation stops the old
 site and privately backs up its account configuration; it reads the old password
 from the local Docker daemon in memory without echoing inspect output. It does
 not retire accounts itself. A failed backup leaves the old container available
@@ -190,6 +195,14 @@ The later container bootstrap must verify replacements before retiring old acces
 The `check` operation is the pre-removal guard. Existing state/archives are not
 overwritten. Historical `.netrc`, packages, logs and recovery copies can contain
 retired passwords; their private retention/removal requires installation review.
+
+Failed container bootstrap publishes only an allowlisted reason code in the
+root-private `.bootstrap-failure.json` beside the site's credentials. Agent
+readiness fails immediately on that marker instead of waiting for HTTP. Deployment
+entrypoints must hold a failed container without starting Checkmk or VPN, avoiding
+restart loops. Resolve the reported condition, then explicitly restart the
+container: a fresh attempt clears the marker and revalidates the existing state.
+Never delete credentials or activate unrelated changes to bypass the guard.
 
 `python -m dwlabcmkapi.agent_download --site SITE --credential-file FILE --port
 8080 --destination DIR` uses only literal loopback HTTP, with environment proxy

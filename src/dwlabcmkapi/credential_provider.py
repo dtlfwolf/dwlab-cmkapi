@@ -52,6 +52,7 @@ class SiteAutomationCredentialProvider:
                 or path.name != "credentials.json" or path.parent.name != site):
             raise BootstrapError("Credential reference must identify this site's private state.")
         with SiteCredentialStore(path.parent.parent).transaction(site) as transaction:
+            transaction.raise_if_failed()
             state = transaction.load()
             if state is None or state.phase != "accounts-ready" or not state.activation_complete:
                 return None

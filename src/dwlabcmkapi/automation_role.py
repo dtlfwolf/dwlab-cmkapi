@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from .credential_bootstrap import BootstrapError, SiteCredentialState
+from typing import TYPE_CHECKING
+
+from .credential_bootstrap import BootstrapError, BootstrapFailureCode, SiteCredentialState
+
+if TYPE_CHECKING:
+    from .account_bootstrap import AccountRequests
 
 
 class AutomationRoleProvisioner:
@@ -24,7 +29,7 @@ class AutomationRoleProvisioner:
                           "wato.services", "wato.service_discovery_to_monitored",
                           "wato.service_discovery_to_removed"})
 
-    def __init__(self, transport) -> None:
+    def __init__(self, transport: AccountRequests) -> None:
         self._transport = transport
 
     def _get(self, state: SiteCredentialState, actor: str, secret: str) -> dict:
@@ -32,8 +37,11 @@ class AutomationRoleProvisioner:
 
     def assert_absent(self, state: SiteCredentialState) -> None:
         """Do not adopt or overwrite an unrelated customer's existing role."""
-        if self._get(state, "cmkadmin", state.bootstrap_password)["status"] != 404:
-            raise BootstrapError("Automation role already exists; explicit review is required.")
+        status = self._get(state, "cmkadmin", state.bootstrap_password)["status"]
+        if status == 200:
+            raise BootstrapError("Automation role already exists; explicit review is required.", code=BootstrapFailureCode.ACCOUNT_CONFLICT)
+        if status != 404:
+            raise BootstrapError("Cannot inspect the reserved automation role.", code=BootstrapFailureCode.NATIVE_OPERATION)
 
     def provision(self, state: SiteCredentialState) -> None:
         """Build permissions from the target release's registered permission set."""

@@ -7,10 +7,10 @@ import hashlib
 import json
 from typing import TYPE_CHECKING
 
-from .credential_bootstrap import BootstrapError, SiteCredentialState
+from .credential_bootstrap import BootstrapError, BootstrapFailureCode, SiteCredentialState
 
 if TYPE_CHECKING:
-    from .account_bootstrap import AccountTransport
+    from .account_bootstrap import AccountRequests
 
 
 class BootstrapChangeLedger:
@@ -18,7 +18,7 @@ class BootstrapChangeLedger:
 
     PATH = "/domain-types/activation_run/collections/pending_changes"
 
-    def __init__(self, transport: AccountTransport) -> None:
+    def __init__(self, transport: AccountRequests) -> None:
         self._transport = transport
 
     def pending(self, state: SiteCredentialState, actor: str, secret: str) -> tuple[dict, dict[str, dict]]:
@@ -44,7 +44,8 @@ class BootstrapChangeLedger:
         """Require exactly the recorded changes; a stopped site is the maintenance boundary."""
         _, records = self.pending(state, actor, secret)
         if set(records) != set(state.bootstrap_changes):
-            raise BootstrapError("Unrecorded pending changes require review before account provisioning/activation.")
+            raise BootstrapError("Unrecorded pending changes require review before account provisioning/activation.",
+                                 code=BootstrapFailureCode.PENDING_CHANGES)
 
     def record_one(self, state: SiteCredentialState, actor: str, secret: str) -> SiteCredentialState:
         """Accept one acknowledged user mutation, never an unrelated batch of changes."""

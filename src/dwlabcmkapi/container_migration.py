@@ -12,9 +12,39 @@ import subprocess
 import stat
 from typing import Callable
 
+from .account_bootstrap import NativeAccountTransport, SiteAccountProvisioner
 from .credential_bootstrap import (
     BootstrapError, RootBootstrapAuthorization, SiteCredentialState, SiteCredentialStore,
 )
+
+
+class DockerReadOnlyAccountInspection:
+    """Run the existing authenticated native adapter in a running legacy site."""
+
+    PATHS = frozenset({
+        "/objects/user_config/dwlabcmkadm", "/objects/user_config/dwlab-automation",
+        "/objects/user_role/dwlab_automation",
+        "/domain-types/activation_run/collections/pending_changes",
+        "/domain-types/site_connection/collections/all",
+    })
+
+    def __init__(self, site: str, runner: Callable = subprocess.run) -> None:
+        self._site, self._runner = site, runner
+        self._native = NativeAccountTransport(runner=self._execute)
+
+    def _execute(self, arguments: list[str], **kwargs) -> subprocess.CompletedProcess:
+        return self._runner(["docker", "--host", "unix:///var/run/docker.sock", "exec", "-i",
+                             self._site, *arguments], **kwargs)
+
+    def request(self, state: SiteCredentialState, username: str, password: str,
+                method: str, path: str, *, body: dict | None = None,
+                etag: str | None = None) -> dict:
+        """No HTTP listener, activation, writes or credentials in command arguments."""
+        RootBootstrapAuthorization().require_root()
+        if (state.site != self._site or method != "GET" or path not in self.PATHS
+                or body is not None or etag is not None or username != "cmkadmin"):
+            raise BootstrapError("Legacy inspection permits only site-bound authenticated reads.")
+        return self._native.request(state, username, password, method, path)
 
 
 class LegacyContainerMigration:
@@ -40,6 +70,7 @@ class LegacyContainerMigration:
         """Refuse destructive container replacement without private recovery state."""
         RootBootstrapAuthorization().require_root()
         with self._store.transaction(site) as transaction:
+            transaction.raise_if_failed()
             state = transaction.load()
             if state is None:
                 raise BootstrapError("Run approved legacy-container migration before replacing this existing container.")
@@ -77,6 +108,13 @@ class LegacyContainerMigration:
                 identity = self._run(["exec", site, "id", option, site])
                 if identity.stdout.strip() != b"1000":
                     raise BootstrapError("Legacy container site UID/GID requires explicit migration review.")
+            candidate = replace(SiteCredentialState.generate(site, 1000, 1000),
+                                phase="awaiting-accounts", bootstrap_password=old_password,
+                                legacy_migration=True)
+            logger = logging.getLogger(__name__)
+            logger.info("STEP START: operation=cmk-container-migration phase=read-only-legacy-preflight site=%s", site)
+            SiteAccountProvisioner(DockerReadOnlyAccountInspection(site, self._runner)).assert_absent(candidate)
+            logger.info("STEP PASS: operation=cmk-container-migration phase=read-only-legacy-preflight site=%s old_site_unchanged=true", site)
             self._run(["exec", site, "omd", "stop", site], output=subprocess.DEVNULL)
             backup = self._store.root / site / "before-migration.tar.gz"
             descriptor = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -87,10 +125,7 @@ class LegacyContainerMigration:
                 os.fsync(stream.fileno())
                 if stream.tell() == 0:
                     raise BootstrapError("Legacy container recovery archive is empty.")
-            state = replace(SiteCredentialState.generate(site, 1000, 1000),
-                            phase="awaiting-accounts", bootstrap_password=old_password,
-                            legacy_migration=True)
-            transaction.save(state)
+            transaction.save(candidate)
 
 
 class ContainerMigrationCli:
@@ -117,7 +152,10 @@ class ContainerMigrationCli:
                 migration.prepare(args.site, approved=args.approve_existing_site)
             else:
                 migration.check(args.site)
-        except (BootstrapError, OSError, ValueError) as error:
+        except BootstrapError as error:
+            logger.error("STEP FAIL: operation=cmk-container-migration code=%s reason=%s; no automatic activation or discard", error.code.identifier, error.code.message)
+            return 1
+        except (OSError, ValueError) as error:
             logger.error("STEP FAIL: operation=cmk-container-migration failure=%s; review required before replacement", type(error).__name__)
             return 1
         logger.info("STEP PASS: operation=cmk-container-migration site=%s", args.site)

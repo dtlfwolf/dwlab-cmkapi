@@ -6,13 +6,14 @@ import subprocess
 import pytest
 
 from dwlabcmkapi.container_migration import LegacyContainerMigration
-from dwlabcmkapi.credential_bootstrap import BootstrapError, RootBootstrapAuthorization, SiteCredentialStore
+from dwlabcmkapi.credential_bootstrap import BootstrapError, BootstrapFailureCode, RootBootstrapAuthorization, SiteCredentialStore
 
 
 class Docker:
-    def __init__(self, fail_backup=False):
+    def __init__(self, fail_backup=False, pending=False, denied=False):
         self.calls = []
         self.fail_backup = fail_backup
+        self.pending, self.denied = pending, denied
 
     def __call__(self, arguments, **options):
         self.calls.append((arguments, options))
@@ -21,6 +22,18 @@ class Docker:
         assert "private-legacy-secret" not in repr(arguments) + repr(options["env"])
         if arguments[3] == "inspect":
             content = json.dumps([{"Config": {"Env": ["CMK_SITE_ID=client", "CMK_PASSWORD=private-legacy-secret"]}}]).encode()
+        elif "/usr/sbin/runuser" in arguments:
+            request = json.loads(options["input"])
+            assert request["method"] == "GET"
+            assert request["password"] == "private-legacy-secret"
+            status = 401 if self.denied else 404
+            data = {"status": status}
+            if "pending_changes" in request["path"]:
+                changes = [{"id": "fixture", "action_name": "create-host", "user_id": "cmkadmin"}] if self.pending else []
+                data = {"status": 200, "pending_changes": changes}
+            elif "site_connection" in request["path"]:
+                data = {"status": 200, "site_connections": [{"id": "client", "replication_enabled": False}]}
+            content = json.dumps(data).encode()
         elif "id" in arguments:
             content = b"1000\n"
         elif "tar" in arguments:
@@ -86,4 +99,29 @@ def test_invalid_site_does_not_reach_docker(tmp_path):
     migration = LegacyContainerMigration(SiteCredentialStore(tmp_path / "private"), docker)
     with pytest.raises(BootstrapError):
         migration.prepare("../escape", approved=True)
+    assert not docker.calls
+
+
+@pytest.mark.parametrize("argument,code", [("pending", BootstrapFailureCode.PENDING_CHANGES),
+                                          ("denied", BootstrapFailureCode.NATIVE_OPERATION)])
+def test_preflight_blocks_before_stop_backup_or_state_publication(tmp_path, argument, code):
+    docker = Docker(**{argument: True})
+    store = SiteCredentialStore(tmp_path / "private")
+    with pytest.raises(BootstrapError) as error:
+        LegacyContainerMigration(store, docker).prepare("client", approved=True)
+    assert error.value.code is code
+    assert not any("stop" in args or "tar" in args or "rm" in args for args, _ in docker.calls)
+    assert not (store.root / "client/credentials.json").exists()
+    assert not (store.root / "client/before-migration.tar.gz").exists()
+
+
+def test_docker_preflight_rejects_mutations_before_execution(tmp_path):
+    from dwlabcmkapi.container_migration import DockerReadOnlyAccountInspection
+    from dwlabcmkapi.credential_bootstrap import SiteCredentialState
+    docker = Docker()
+    adapter = DockerReadOnlyAccountInspection("client", docker)
+    state = SiteCredentialState.generate("client", 1000, 1000)
+    with pytest.raises(BootstrapError, match="only"):
+        adapter.request(state, "cmkadmin", "private-legacy-secret", "POST",
+                        "/domain-types/activation_run/actions/activate-changes/invoke")
     assert not docker.calls

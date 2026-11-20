@@ -14,22 +14,26 @@ import subprocess
 from typing import Callable, Protocol
 
 from .credential_bootstrap import (
-    BootstrapAuthorization, BootstrapError, OmdBootstrapBackend,
+    BootstrapAuthorization, BootstrapError, BootstrapFailureCode, OmdBootstrapBackend,
     RootBootstrapAuthorization, SiteCredentialState, SiteCredentialStore,
 )
 from .automation_role import AutomationRoleProvisioner
 from .bootstrap_changes import BootstrapChangeLedger
 
 
-class AccountTransport(Protocol):
+class AccountRequests(Protocol):
     """Authenticated site-local requests; implementations must not open listeners."""
-
-    def verify_site(self, state: SiteCredentialState) -> None: ...
-    def verify_identity(self, state: SiteCredentialState) -> None: ...
 
     def request(self, state: SiteCredentialState, username: str, password: str,
                 method: str, path: str, *, body: dict | None = None,
                 etag: str | None = None) -> dict: ...
+
+
+class AccountTransport(AccountRequests, Protocol):
+    """Native provisioning additionally verifies a stopped site's OS identity."""
+
+    def verify_site(self, state: SiteCredentialState) -> None: ...
+    def verify_identity(self, state: SiteCredentialState) -> None: ...
 
 
 class NativeAccountTransport:
@@ -97,7 +101,7 @@ class SiteAccountProvisioner:
     ADMIN = "dwlabcmkadm"
     AUTOMATION = "dwlab-automation"
 
-    def __init__(self, transport: AccountTransport) -> None:
+    def __init__(self, transport: AccountRequests) -> None:
         self._transport = transport
 
     def _get(self, state: SiteCredentialState, account: str,
@@ -107,8 +111,13 @@ class SiteAccountProvisioner:
     def assert_absent(self, state: SiteCredentialState) -> None:
         """Refuse unexpected existing accounts before recording mutation intent."""
         for account in (self.ADMIN, self.AUTOMATION):
-            if self._get(state, account, "cmkadmin", state.bootstrap_password)["status"] != 404:
-                raise BootstrapError("Replacement account preflight failed; existing accounts are not overwritten.")
+            status = self._get(state, account, "cmkadmin", state.bootstrap_password)["status"]
+            if status == 200:
+                raise BootstrapError("Replacement account preflight failed; existing accounts are not overwritten.",
+                                     code=BootstrapFailureCode.ACCOUNT_CONFLICT)
+            if status != 404:
+                raise BootstrapError("Cannot inspect replacement accounts using the existing administrator.",
+                                     code=BootstrapFailureCode.NATIVE_OPERATION)
         AutomationRoleProvisioner(self._transport).assert_absent(state)
         BootstrapChangeLedger(self._transport).assert_current(state, "cmkadmin", state.bootstrap_password)
         connections = self._transport.request(
@@ -118,7 +127,8 @@ class SiteAccountProvisioner:
         if (connections["status"] != 200 or not isinstance(connections.get("site_connections"), list)
                 or any(item.get("id") != state.site and item.get("replication_enabled") is not False
                        for item in connections["site_connections"])):
-            raise BootstrapError("Independent local accounts require configuration/user replication to be disabled.")
+            raise BootstrapError("Independent local accounts require configuration/user replication to be disabled.",
+                                 code=BootstrapFailureCode.REPLICATION_ENABLED)
 
     def _verify_one(self, state: SiteCredentialState, account: str, secret: str,
                     auth_type: str) -> None:
@@ -266,8 +276,9 @@ class SiteAccountCompletion:
                     transaction.save(state)
                 accounts.verify_retired(state)
         except (BootstrapError, OSError, KeyError, TypeError, ValueError) as error:
-            self._logger.error("STEP FAIL: operation=cmk-account-complete caller_uid=%s site=%r failure=%s", caller, site, type(error).__name__)
-            raise BootstrapError("Account completion failed; private recovery state retained and activation blocked.") from None
+            code = error.code if isinstance(error, BootstrapError) else BootstrapFailureCode.GENERIC
+            self._logger.error("STEP FAIL: operation=cmk-account-complete caller_uid=%s site=%r code=%s reason=%s", caller, site, code.identifier, code.message)
+            raise BootstrapError("Account completion failed; private recovery state retained and activation blocked.", code=code) from None
         self._logger.info("STEP PASS: operation=cmk-account-complete caller_uid=%s site=%r phase=accounts-ready activation_performed=false", caller, site)
         return AccountCompletionResult(site)
 
